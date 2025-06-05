@@ -53,5 +53,6 @@ struct ActualPerformanceRecord {
 struct LearningContext {
     std::string path_name;
     std::string transform_key;
-    std::string operation_key;
+    std::string operation_key; // For sensitivity (lambda) learning
+    std::string main_operation_name; // For base_operational_cost learning
 };

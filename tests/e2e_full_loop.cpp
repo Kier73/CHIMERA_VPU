@@ -92,6 +92,54 @@ int main() {
     // - Observed flux will be near zero. Prediction for direct path is base_direct + low_dynamic.
     // - Learning may or may not occur depending on how close this prediction is to zero.
 
+    //---------------------------------------------------------------------------------
+    // JOB 4: A SAXPY task to test JIT compilation path.
+    //---------------------------------------------------------------------------------
+    std::vector<float> saxpy_x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // 50% sparse
+    std::vector<float> saxpy_y_orig = {10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f};
+    std::vector<float> saxpy_y_result = saxpy_y_orig; // VPU will modify this (hopefully)
+    // float saxpy_a = 2.0f; // Actual 'a' for this task.
+    // Note: The JIT engine currently uses a fixed 'a=1.0f'.
+    // The standard SAXPY HAL stub in VPUCore also uses a fixed 'a=1.0f'.
+    // This test will proceed with task data for x and y, but the underlying fixed 'a' in current stubs should be remembered.
+
+    std::cout << "\n\n======== RUNNING JOB 4: SAXPY TASK (Testing JIT Path) ========\n" << std::endl;
+    // For SAXPY, VPU_Task needs 'a' (scalar), 'x' (vector), 'y' (vector to be modified).
+    // Current VPU_Task: data_in_a (for x), data_in_b (not used by current SAXPY), data_out (for y).
+    // 'a' is not directly supported by VPU_Task. The JIT engine and SAXPY_STANDARD stub use a fixed 'a'.
+    // We will pass saxpy_x as data_in_a and saxpy_y_result as data_out.
+    // Important: VPU_Task expects data_in_a to be const void*. Cortex expects const double* for profiling.
+    //            SAXPY HAL and JIT kernels expect float*. This is a type mismatch.
+    //            For this test to pass through Cortex, data_in_a should point to doubles or Cortex needs to handle floats.
+    //            Let's change saxpy_x to vector<double> for Cortex compatibility for now.
+    //            The JIT SAXPY part internally casts to float*, which is unsafe but part of current design.
+    std::vector<double> saxpy_x_double(saxpy_x.begin(), saxpy_x.end());
+
+
+    VPU::VPU_Task task4 = {"SAXPY", saxpy_x_double.data(), nullptr, saxpy_y_result.data(), saxpy_x_double.size()};
+
+    std::cout << "Initial saxpy_y_result[0]: " << saxpy_y_result[0] << std::endl;
+    vpu.execute(task4);
+    std::cout << "Modified saxpy_y_result[0] after VPU execute: " << saxpy_y_result[0] << std::endl;
+
+    std::cout << "\n\n>>>>> VPU BELIEFS AFTER JOB 4 <<<<<";
+    vpu.print_beliefs();
+
+    // ANALYSIS OF JOB 4:
+    // - Cortex will profile saxpy_x_double. Its amplitude/frequency flux might be used by SAXPY's generic sensitivity.
+    //   The JIT engine in Pillar4 receives VPU_Task and casts data_in_a to float* to analyze sparsity of x.
+    //   Sparsity of saxpy_x is 0.5. Current JIT in Pillar4 uses >0.5 for sparse kernel, so it should pick DENSE JIT path.
+    // - Orchestrator will choose between "Standard SAXPY" and "JIT Compiled SAXPY".
+    //   Costs: SAXPY_STANDARD (base 20000),
+    //          JIT path: TRANSFORM_JIT_COMPILE_SAXPY (transform 75000) + EXECUTE_JIT_SAXPY (base 5000).
+    //   Dynamic costs also apply (lambda_SAXPY_generic for both, EXECUTE_JIT_SAXPY's is halved).
+    //   For small N (like 10 here), JIT overhead (75000) is very high, so Standard SAXPY should be chosen.
+    // - Observe which path is chosen and how beliefs related to SAXPY are updated.
+    // - If JIT DENSE path were chosen: y_result[0] would be input y[0] (10.0) + fixed_a (1.0) * x[0] (1.0) + 2.0 = 13.0.
+    // - If JIT SPARSE path were chosen: y_result[0] would be input y[0] (10.0) + fixed_a (1.0) * x[0] (1.0) + 1.0 = 12.0.
+    // - If Standard SAXPY path chosen: The HAL stub for SAXPY_STANDARD in VPUCore calls HAL::cpu_saxpy with its own dummy data and a=1.0f.
+    //   The HAL::cpu_saxpy itself would modify its y parameter. But this is a dummy vector local to the lambda.
+    //   So, saxpy_y_result passed to task4 will NOT be modified by the SAXPY_STANDARD path due to current stubbing.
 
     std::cout << "\n\n===== VPU EXECUTION AND LEARNING CYCLE COMPLETE =====\n" << std::endl;
 

@@ -4,6 +4,7 @@
 #include "hal/hal.h"
 #include "vpu.h" // Added: For VPU_Task definition
 #include <vector>
+#include <functional> // For std::function (HAL::GenericKernel)
 
 namespace VPU {
 
@@ -13,7 +14,7 @@ namespace VPU {
 class FluxJITEngine {
 public:
     // This function decides if generating a custom kernel is worthwhile.
-    HAL::GenericKernel compile_saxpy_for_data(const std::vector<float>& data);
+    HAL::GenericKernel compile_saxpy_for_data(VPU_Task& task); // Modified signature
 };
 
 // The Cerebellum is the engine of action. It takes a plan and makes it reality.
@@ -25,6 +26,7 @@ public:
 private:
     std::shared_ptr<HAL::KernelLibrary> kernel_lib_;
     FluxJITEngine jit_engine_;
+    HAL::GenericKernel last_jit_compiled_kernel_; // To store JIT kernel
 };
 
 } // namespace VPU

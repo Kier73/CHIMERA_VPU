@@ -59,8 +59,16 @@ std::vector<ExecutionPlan> Orchestrator::generate_candidate_paths(const std::str
         paths.push_back({"Flux-Adaptive GEMM", 0.0, {
             {"GEMM_FLUX_ADAPTIVE", "input", "output"}
         }});
+    } else if (task_type == "SAXPY") {
+        paths.push_back({"Standard SAXPY", 0.0, {
+            {"SAXPY_STANDARD", "input", "output"}
+        }});
+        paths.push_back({"JIT Compiled SAXPY", 0.0, {
+            {"JIT_COMPILE_SAXPY", "input_metadata", "compiled_kernel_id"}, // Conceptual step
+            {"EXECUTE_JIT_SAXPY", "input", "output"}                        // Conceptual step
+        }});
     }
-    // TODO: Could add a "JIT Generation" path here.
+    // TODO: Could add a "JIT Generation" path here for other ops.
     return paths;
 }
 
@@ -82,14 +90,36 @@ double Orchestrator::simulate_flux_cost(const ExecutionPlan& plan, const DataPro
             double dynamic_cost = 0.0;
 
             // This is f(ACW, λ) - the function that translates data complexity into cost
-            if (plan.chosen_path_name.find("Direct") != std::string::npos) {
-                 dynamic_cost = profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_A");
-            } else if (plan.chosen_path_name.find("GEMM") != std::string::npos) {
-                 dynamic_cost = (1.0 - profile.sparsity_ratio) * hw_profile_->flux_sensitivities.at("lambda_Sparsity");
+            if (step.operation_name == "CONV_DIRECT") {
+                if (hw_profile_->flux_sensitivities.count("lambda_Conv_Amp") &&
+                    hw_profile_->flux_sensitivities.count("lambda_Conv_Freq")) {
+                    dynamic_cost = (profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_Conv_Amp")) +
+                                   (profile.frequency_flux * hw_profile_->flux_sensitivities.at("lambda_Conv_Freq"));
+                }
+            } else if (step.operation_name == "GEMM_NAIVE" || step.operation_name == "GEMM_FLUX_ADAPTIVE") {
+                if (hw_profile_->flux_sensitivities.count("lambda_Sparsity")) {
+                    dynamic_cost = (1.0 - profile.sparsity_ratio) * hw_profile_->flux_sensitivities.at("lambda_Sparsity");
+                }
+            } else if (step.operation_name == "SAXPY_STANDARD") {
+                if (hw_profile_->flux_sensitivities.count("lambda_SAXPY_generic")) {
+                     dynamic_cost = profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_SAXPY_generic");
+                }
+            } else if (step.operation_name == "EXECUTE_JIT_SAXPY") {
+                if (hw_profile_->flux_sensitivities.count("lambda_SAXPY_generic")) {
+                    // JIT version might have different/lower dynamic cost sensitivity
+                    dynamic_cost = profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_SAXPY_generic") * 0.5;
+                }
             }
+            // Note: ELEMENT_WISE_MULTIPLY currently has a base_operational_cost but no dynamic_cost logic.
+            // This is acceptable for now as it's an intermediate step in FFT convolution.
 
             total_flux += (base_op_cost + dynamic_cost);
         }
+        // The following 'else if' blocks for SAXPY_STANDARD and EXECUTE_JIT_SAXPY are removed
+        // as their logic is now incorporated above within the main 'if(hw_profile_->base_operational_costs.count(step.operation_name))' block.
+        // This simplifies the structure to:
+        // 1. If transform_cost, add it.
+        // 2. Else if base_operational_cost, calculate base + specific dynamic_cost, then add.
     }
     return total_flux;
 }

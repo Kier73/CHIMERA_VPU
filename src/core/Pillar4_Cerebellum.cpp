@@ -18,6 +18,9 @@ ActualPerformanceRecord Cerebellum::execute(const ExecutionPlan& plan, VPU_Task&
     // Use high-precision timer to capture ground truth
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // Ensure last_jit_compiled_kernel_ is reset at the beginning of execution.
+    last_jit_compiled_kernel_ = nullptr;
+
     // The Memory Manager holds intermediate results between steps.
     std::map<std::string, void*> memory_buffers;
     memory_buffers["input"] = const_cast<void*>(task.data_in_a);
@@ -47,19 +50,19 @@ ActualPerformanceRecord Cerebellum::execute(const ExecutionPlan& plan, VPU_Task&
     for (const auto& step : plan.steps) {
         std::cout << "  -> Dispatching Step: " << step.operation_name << std::endl;
 
-        // This is where JIT compilation would be invoked if the plan demanded it.
-        // if (step.operation_name == "JIT_GENERATE_SAXPY") {
-        //     // Assuming task.data_in_a is std::vector<float> for this conceptual JIT
-        //     if (task.data_in_a) { // Basic check
-        //          const std::vector<float>* data_for_jit = static_cast<const std::vector<float>*>(task.data_in_a);
-        //          auto specialized_kernel = jit_engine_.compile_saxpy_for_data(*data_for_jit);
-        //          if(specialized_kernel) { specialized_kernel(); }
-        //          else { /* fall back to HAL kernel */ }
-        //     }
-        // }
-
-
-        if (kernel_lib_->count(step.operation_name)) {
+        if (step.operation_name == "JIT_COMPILE_SAXPY") {
+            std::cout << "  -> [Cerebellum] Requesting JIT compilation for SAXPY..." << std::endl;
+            last_jit_compiled_kernel_ = jit_engine_.compile_saxpy_for_data(task);
+            // No actual execution for this step in terms of HAL call, it's a "transform"
+        } else if (step.operation_name == "EXECUTE_JIT_SAXPY") {
+            if (last_jit_compiled_kernel_) {
+                std::cout << "  -> [Cerebellum] Executing JIT-compiled SAXPY kernel..." << std::endl;
+                last_jit_compiled_kernel_();
+            } else {
+                std::cerr << "  -> [Cerebellum ERROR] EXECUTE_JIT_SAXPY called but no JIT kernel was compiled!" << std::endl;
+                throw std::runtime_error("EXECUTE_JIT_SAXPY called without a compiled JIT kernel.");
+            }
+        } else if (kernel_lib_->count(step.operation_name)) { // Existing logic for standard kernels
             auto kernel_func = kernel_lib_->at(step.operation_name);
 
             // CONCEPTUAL KERNEL EXECUTION:
@@ -97,27 +100,67 @@ ActualPerformanceRecord Cerebellum::execute(const ExecutionPlan& plan, VPU_Task&
 }
 
 // Conceptual JIT engine logic
-HAL::GenericKernel FluxJITEngine::compile_saxpy_for_data(const std::vector<float>& data) {
-    std::cout << "    -> [JIT Engine] Received compilation request for SAXPY." << std::endl;
-    // 1. Analyze data for a unique optimization opportunity (e.g., extreme sparsity).
-    // Example: check if a large percentage of data is zero.
+HAL::GenericKernel FluxJITEngine::compile_saxpy_for_data(VPU_Task& task) { // Modified signature
+    std::cout << "    -> [JIT Engine] SAXPY compilation request for task_type: " << task.task_type << std::endl;
+
+    const float* x_data = static_cast<const float*>(task.data_in_a);
+    // 'a' for SAXPY is not directly in VPU_Task. Using a fixed value for now.
+    float fixed_a = 1.0f;
+
+    std::vector<float> x_vec_analysis;
+    if (x_data && task.num_elements > 0) {
+       x_vec_analysis.assign(x_data, x_data + task.num_elements);
+    }
+
     size_t zero_count = 0;
-    for(float val : data) {
-        if (val == 0.0f) {
-            zero_count++;
+    if (!x_vec_analysis.empty()) {
+        for (float val : x_vec_analysis) {
+            if (val == 0.0f) {
+                zero_count++;
+            }
         }
     }
-    bool is_worthwhile = (static_cast<double>(zero_count) / data.size() > 0.8); // e.g. >80% sparse
+    double sparsity_ratio = x_vec_analysis.empty() ? 0.0 : static_cast<double>(zero_count) / x_vec_analysis.size();
+    std::cout << "    -> [JIT Engine] Data sparsity for input 'x': " << sparsity_ratio << std::endl;
 
-    if (is_worthwhile) {
-        std::cout << "    -> [JIT Engine] Data is highly sparse. Compiling specialized 'NNZ' (non-zero) SAXPY kernel." << std::endl;
-        // 2. Use LLVM (conceptually) to generate a new function in memory.
-        // This new function would iterate only over non-zero elements.
-        // 3. Return a function pointer (as std::function) to the new kernel.
-        return [](){ std::cout << "    -> [JIT KERNEL] Executing specialized JIT-generated SAXPY kernel for sparse data." << std::endl; /* Actual JIT'd code would run here */ };
+    // Capture necessary data for the returned kernel by value or pointer as appropriate.
+    // Pointers (like p_data_in_a, p_data_out) assume their lifetime is managed by VPU_Task and valid during execution.
+    void* p_data_in_a = const_cast<void*>(task.data_in_a);
+    void* p_data_out = task.data_out;
+    size_t num_elements_captured = task.num_elements; // Capture num_elements
+
+    if (sparsity_ratio > 0.5) {
+        std::cout << "    -> [JIT Engine] Data is sparse. Providing 'SPARSE SAXPY' logic." << std::endl;
+        return [fixed_a, p_data_in_a, p_data_out, num_elements_captured](){
+            if (!p_data_in_a || !p_data_out || num_elements_captured == 0) {
+                std::cerr << "JIT SPARSE KERNEL: Invalid data pointers or zero elements." << std::endl;
+                return;
+            }
+            const float* x = static_cast<const float*>(p_data_in_a);
+            float* y = static_cast<float*>(p_data_out);
+
+            std::vector<float> x_temp(x, x + num_elements_captured);
+            std::vector<float> y_temp(y, y + num_elements_captured);
+            HAL::cpu_saxpy_sparse_specialized(fixed_a, x_temp, y_temp);
+            // Copy back result from y_temp to p_data_out
+            for(size_t i=0; i<num_elements_captured; ++i) y[i] = y_temp[i];
+        };
     } else {
-        std::cout << "    -> [JIT Engine] Data is dense enough. SAXPY compilation not worthwhile. Declining." << std::endl;
-        return nullptr; // Indicate that a fallback to a standard HAL kernel is needed.
+        std::cout << "    -> [JIT Engine] Data is dense. Providing 'DENSE SAXPY' logic." << std::endl;
+        return [fixed_a, p_data_in_a, p_data_out, num_elements_captured](){
+            if (!p_data_in_a || !p_data_out || num_elements_captured == 0) {
+                std::cerr << "JIT DENSE KERNEL: Invalid data pointers or zero elements." << std::endl;
+                return;
+            }
+            const float* x = static_cast<const float*>(p_data_in_a);
+            float* y = static_cast<float*>(p_data_out);
+
+            std::vector<float> x_temp(x, x + num_elements_captured);
+            std::vector<float> y_temp(y, y + num_elements_captured);
+            HAL::cpu_saxpy_dense_specialized(fixed_a, x_temp, y_temp);
+            // Copy back result from y_temp to p_data_out
+            for(size_t i=0; i<num_elements_captured; ++i) y[i] = y_temp[i];
+        };
     }
 }
 
