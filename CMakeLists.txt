@@ -2,6 +2,21 @@
 cmake_minimum_required(VERSION 3.15)
 project(ChimeraVPU CXX)
 
+include(FetchContent)
+FetchContent_Declare(
+  httplib
+  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+  GIT_TAG v0.15.3 # Use a specific tag for stability
+)
+FetchContent_MakeAvailable(httplib)
+
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.3 # Use a specific tag for stability
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -20,6 +35,8 @@ add_library(vpu_core
 target_include_directories(vpu_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/api
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${httplib_SOURCE_DIR} # Added cpp-httplib include directory
+    ${nlohmann_json_SOURCE_DIR}/include # Added nlohmann_json include directory
 )
 
 # Finding FFTW3 using PkgConfig
