@@ -1,0 +1,41 @@
+#ifndef PILLAR2_CORTEX_H
+#define PILLAR2_CORTEX_H
+
+#include <vector>
+#include <string>
+#include <cmath>        // For std::sqrt, std::log2
+#include <numeric>      // For std::accumulate (potentially)
+#include <iostream>     // For std::cerr
+#include <fftw3.h>      // Include actual FFTW3 header
+#include "vpu_data_structures.h" // For EnrichedExecutionContext, DataProfile
+#include "vpu.h"                 // For VPU_Task (Corrected from "api/vpu.h")
+#include <memory>                // For std::make_shared
+
+namespace VPU { // Changed namespace to VPU
+
+    // Data structure to hold the results of the omnimorphic profiling (internal to Cortex)
+    struct OmniProfile {
+        double amplitude_flux = 0.0;
+        double frequency_flux = 0.0;
+        double entropy_flux = 0.0;
+        double temporal_coherence = 0.0;
+        // Add other relevant metrics as needed
+    };
+
+    class Cortex { // Renamed class to Cortex
+    public:
+        Cortex();
+        ~Cortex();
+
+        // Analyzes the data from VPU_Task and returns EnrichedExecutionContext
+        EnrichedExecutionContext analyze(const VPU_Task& task);
+
+    private:
+        // Profiles the omnimorphic characteristics of a given data stream
+        OmniProfile profileOmni(const double* data, int num_elements);
+        // Helper methods, if any, can be declared here.
+    };
+
+} // namespace VPU
+
+#endif // PILLAR2_CORTEX_H
