@@ -2,6 +2,7 @@
 
 #include "vpu_data_structures.h"
 #include "hal/hal.h"
+#include "vpu.h" // Added: For VPU_Task definition
 #include <vector>
 
 namespace VPU {

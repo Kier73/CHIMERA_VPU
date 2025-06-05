@@ -7,37 +7,35 @@
 #include <numeric>      // For std::accumulate (potentially)
 #include <iostream>     // For std::cerr
 #include <fftw3.h>      // Include actual FFTW3 header
+#include "vpu_data_structures.h" // For EnrichedExecutionContext, DataProfile
+#include "vpu.h"                 // For VPU_Task (Corrected from "api/vpu.h")
+#include <memory>                // For std::make_shared
 
-// Forward declaration if needed by other files, though not strictly necessary for this header alone.
-// class RepresentationalFluxAnalyzer; // Example
+namespace VPU { // Changed namespace to VPU
 
-namespace Chimera_VPU {
-
-namespace Pillar2_Cortex {
-
-    // Data structure to hold the results of the omnimorphic profiling
+    // Data structure to hold the results of the omnimorphic profiling (internal to Cortex)
     struct OmniProfile {
         double amplitude_flux = 0.0;
-        double frequency_flux = 0.0; // Will be calculated using FFT
-        double entropy_flux = 0.0;   // Will be calculated using FFT-derived spectrum
+        double frequency_flux = 0.0;
+        double entropy_flux = 0.0;
         double temporal_coherence = 0.0;
         // Add other relevant metrics as needed
     };
 
-    class RepresentationalFluxAnalyzer {
+    class Cortex { // Renamed class to Cortex
     public:
-        RepresentationalFluxAnalyzer();
-        ~RepresentationalFluxAnalyzer();
+        Cortex();
+        ~Cortex();
 
-        // Profiles the omnimorphic characteristics of a given data stream
-        OmniProfile profileOmni(const double* data, int num_elements);
+        // Analyzes the data from VPU_Task and returns EnrichedExecutionContext
+        EnrichedExecutionContext analyze(const VPU_Task& task);
 
     private:
+        // Profiles the omnimorphic characteristics of a given data stream
+        OmniProfile profileOmni(const double* data, int num_elements);
         // Helper methods, if any, can be declared here.
     };
 
-} // namespace Pillar2_Cortex
-
-} // namespace Chimera_VPU
+} // namespace VPU
 
 #endif // PILLAR2_CORTEX_H

@@ -8,24 +8,54 @@
 // The actual fftw3.h is already included in Pillar2_Cortex.h
 // No need for simulated FFTW functions or typedefs here.
 
-namespace Chimera_VPU {
+namespace VPU { // Changed namespace
 
-namespace Pillar2_Cortex {
-
-    RepresentationalFluxAnalyzer::RepresentationalFluxAnalyzer() {
+    Cortex::Cortex() { // Renamed class
         // Constructor implementation (if any)
+        std::cout << "[Pillar 2] Cortex initialized." << std::endl;
     }
 
-    RepresentationalFluxAnalyzer::~RepresentationalFluxAnalyzer() {
+    Cortex::~Cortex() { // Renamed class
         // Destructor implementation (if any)
     }
 
-    OmniProfile RepresentationalFluxAnalyzer::profileOmni(const double* data, int num_elements) {
+    // Public method to analyze task data
+    EnrichedExecutionContext Cortex::analyze(const VPU_Task& task) {
+        std::cout << "[Pillar 2] Cortex: Analyzing task '" << task.task_type << "'..." << std::endl;
+
+        OmniProfile omni_profile;
+        if (task.data_in_a && task.num_elements > 0) {
+            // Assuming task.data_in_a is const double* and task.num_elements is int for profileOmni.
+            // This cast is potentially unsafe if task.data_in_a is not actually pointing to doubles.
+            // A real system would need robust type checking or a safer way to pass data.
+            const double* data_ptr = static_cast<const double*>(task.data_in_a);
+            omni_profile = profileOmni(data_ptr, static_cast<int>(task.num_elements));
+        } else {
+            std::cerr << "Warning: Cortex::analyze called with null data or zero elements for profiling." << std::endl;
+            // omni_profile will be default (all zeros)
+        }
+
+        auto data_profile_ptr = std::make_shared<DataProfile>();
+        data_profile_ptr->amplitude_flux = omni_profile.amplitude_flux;
+        data_profile_ptr->frequency_flux = omni_profile.frequency_flux;
+        data_profile_ptr->entropy_flux = omni_profile.entropy_flux;
+        // TODO: Populate hamming_weight and sparsity_ratio from VPU_Task if applicable/available.
+        // For example, if task_type indicates binary data, or if VPU_Task has fields for these.
+
+        std::cout << "  -> OmniProfile generated: AF=" << data_profile_ptr->amplitude_flux
+                  << ", FF=" << data_profile_ptr->frequency_flux
+                  << ", EF=" << data_profile_ptr->entropy_flux << std::endl;
+
+        return {data_profile_ptr, task.task_type};
+    }
+
+    // Private method for actual profiling logic
+    OmniProfile Cortex::profileOmni(const double* data, int num_elements) { // Renamed class
         OmniProfile p;
 
         // Basic check for data presence and minimum elements for amplitude flux
         if (!data || num_elements == 0) {
-            std::cerr << "Warning: Null data or zero elements provided to profileOmni." << std::endl;
+            std::cerr << "Warning: Null data or zero elements provided to profileOmni internal method." << std::endl;
             return p; // Return default profile
         }
 
@@ -49,7 +79,7 @@ namespace Pillar2_Cortex {
             fftw_plan plan_r2c = fftw_plan_dft_r2c_1d(num_elements, const_cast<double*>(data), out_complex, FFTW_ESTIMATE);
 
             if (plan_r2c == NULL || out_complex == NULL) {
-                std::cerr << "Warning: FFTW3 plan or memory allocation failed in profileOmni." << std::endl;
+                std::cerr << "Warning: FFTW3 plan or memory allocation failed in profileOmni internal method." << std::endl;
                 if (out_complex) fftw_free(out_complex);
                 // According to FFTW docs, it's safe to call fftw_destroy_plan(NULL)
                 fftw_destroy_plan(plan_r2c);
@@ -119,6 +149,4 @@ namespace Pillar2_Cortex {
         return p;
     }
 
-} // namespace Pillar2_Cortex
-
-} // namespace Chimera_VPU
+} // namespace VPU

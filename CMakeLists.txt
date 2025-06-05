@@ -22,10 +22,15 @@ target_include_directories(vpu_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Placeholder for finding an external FFTW library
-# In a real project, you would uncomment this and link properly.
-find_package(FFTW3 REQUIRED)
-target_link_libraries(vpu_core PRIVATE FFTW3::fftw3)
+# Finding FFTW3 using PkgConfig
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFTW3 REQUIRED fftw3)
+
+# Add FFTW3 include directories to vpu_core
+target_include_directories(vpu_core PRIVATE ${FFTW3_INCLUDE_DIRS})
+
+# Link FFTW3 libraries to vpu_core
+target_link_libraries(vpu_core PRIVATE ${FFTW3_LIBRARIES})
 
 # --- Define Test Executables ---
 add_executable(e2e_full_loop tests/e2e_full_loop.cpp)
