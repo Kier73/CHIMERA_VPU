@@ -2,6 +2,8 @@
 #include <iostream>
 #include <vector>
 #include <string> // Required for VPU_Task task_type
+#include "vpu_data_structures.h" // For VPU::SAXPYParams
+#include <any> // For std::any (though likely included via vpu.h)
 
 // This demonstration shows the full Perceive->Decide->Act->Learn cognitive cycle.
 // We will run two jobs. Job 1 will trigger a learning event. Job 2 will show
@@ -98,27 +100,26 @@ int main() {
     std::vector<float> saxpy_x = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // 50% sparse
     std::vector<float> saxpy_y_orig = {10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f};
     std::vector<float> saxpy_y_result = saxpy_y_orig; // VPU will modify this (hopefully)
-    // float saxpy_a = 2.0f; // Actual 'a' for this task.
-    // Note: The JIT engine currently uses a fixed 'a=1.0f'.
-    // The standard SAXPY HAL stub in VPUCore also uses a fixed 'a=1.0f'.
-    // This test will proceed with task data for x and y, but the underlying fixed 'a' in current stubs should be remembered.
 
-    std::cout << "\n\n======== RUNNING JOB 4: SAXPY TASK (Testing JIT Path) ========\n" << std::endl;
-    // For SAXPY, VPU_Task needs 'a' (scalar), 'x' (vector), 'y' (vector to be modified).
-    // Current VPU_Task: data_in_a (for x), data_in_b (not used by current SAXPY), data_out (for y).
-    // 'a' is not directly supported by VPU_Task. The JIT engine and SAXPY_STANDARD stub use a fixed 'a'.
-    // We will pass saxpy_x as data_in_a and saxpy_y_result as data_out.
-    // Important: VPU_Task expects data_in_a to be const void*. Cortex expects const double* for profiling.
-    //            SAXPY HAL and JIT kernels expect float*. This is a type mismatch.
-    //            For this test to pass through Cortex, data_in_a should point to doubles or Cortex needs to handle floats.
-    //            Let's change saxpy_x to vector<double> for Cortex compatibility for now.
-    //            The JIT SAXPY part internally casts to float*, which is unsafe but part of current design.
+    float dynamic_saxpy_a = 2.5f; // Dynamic 'a' for this SAXPY task
+    VPU::SAXPYParams saxpy_job_params = {dynamic_saxpy_a};
+    // The JIT engine and SAXPY_STANDARD stub in VPUCore should now pick this up if specific_params is handled.
+
+    std::cout << "\n\n======== RUNNING JOB 4: SAXPY TASK (Testing JIT Path with a=" << dynamic_saxpy_a << ") ========\n" << std::endl;
+
+    // Data type conversion for Cortex compatibility (profiling OmniProfile from double*)
     std::vector<double> saxpy_x_double(saxpy_x.begin(), saxpy_x.end());
 
+    VPU::VPU_Task task4 = {
+        "SAXPY",
+        saxpy_x_double.data(),    // data_in_a (const void*)
+        nullptr,                  // data_in_b (const void*)
+        saxpy_y_result.data(),    // data_out (void*)
+        saxpy_x_double.size(),    // num_elements
+        saxpy_job_params          // specific_params (std::any)
+    };
 
-    VPU::VPU_Task task4 = {"SAXPY", saxpy_x_double.data(), nullptr, saxpy_y_result.data(), saxpy_x_double.size()};
-
-    std::cout << "Initial saxpy_y_result[0]: " << saxpy_y_result[0] << std::endl;
+    std::cout << "Initial saxpy_y_result[0]: " << saxpy_y_result[0] << ", x[0]: " << saxpy_x[0] << ", a: " << dynamic_saxpy_a << std::endl;
     vpu.execute(task4);
     std::cout << "Modified saxpy_y_result[0] after VPU execute: " << saxpy_y_result[0] << std::endl;
 
@@ -126,20 +127,23 @@ int main() {
     vpu.print_beliefs();
 
     // ANALYSIS OF JOB 4:
-    // - Cortex will profile saxpy_x_double. Its amplitude/frequency flux might be used by SAXPY's generic sensitivity.
-    //   The JIT engine in Pillar4 receives VPU_Task and casts data_in_a to float* to analyze sparsity of x.
-    //   Sparsity of saxpy_x is 0.5. Current JIT in Pillar4 uses >0.5 for sparse kernel, so it should pick DENSE JIT path.
-    // - Orchestrator will choose between "Standard SAXPY" and "JIT Compiled SAXPY".
-    //   Costs: SAXPY_STANDARD (base 20000),
-    //          JIT path: TRANSFORM_JIT_COMPILE_SAXPY (transform 75000) + EXECUTE_JIT_SAXPY (base 5000).
-    //   Dynamic costs also apply (lambda_SAXPY_generic for both, EXECUTE_JIT_SAXPY's is halved).
-    //   For small N (like 10 here), JIT overhead (75000) is very high, so Standard SAXPY should be chosen.
-    // - Observe which path is chosen and how beliefs related to SAXPY are updated.
-    // - If JIT DENSE path were chosen: y_result[0] would be input y[0] (10.0) + fixed_a (1.0) * x[0] (1.0) + 2.0 = 13.0.
-    // - If JIT SPARSE path were chosen: y_result[0] would be input y[0] (10.0) + fixed_a (1.0) * x[0] (1.0) + 1.0 = 12.0.
-    // - If Standard SAXPY path chosen: The HAL stub for SAXPY_STANDARD in VPUCore calls HAL::cpu_saxpy with its own dummy data and a=1.0f.
-    //   The HAL::cpu_saxpy itself would modify its y parameter. But this is a dummy vector local to the lambda.
-    //   So, saxpy_y_result passed to task4 will NOT be modified by the SAXPY_STANDARD path due to current stubbing.
+    // - Cortex will profile saxpy_x_double.
+    // - The JIT engine in Pillar4 should now extract 'a' = 2.5f from task4.specific_params.
+    //   Sparsity of saxpy_x is 0.5. Current JIT logic (>0.5 for sparse) means it will select the DENSE JIT path.
+    // - Orchestrator Decision:
+    //   - SAXPY_STANDARD path base cost: 20000.
+    //   - JIT SAXPY path base cost: TRANSFORM_JIT_COMPILE_SAXPY (75000) + EXECUTE_JIT_SAXPY (5000) = 80000.
+    //   - Dynamic costs will be added based on lambda_SAXPY_generic and amplitude_flux of saxpy_x_double.
+    //   - Given the high transform cost for JIT, "Standard SAXPY" is still expected to be chosen.
+    // - If JIT DENSE path were chosen:
+    //   y_result[0] would be y_orig[0] + saxpy_param_a * x[0] + 2.0
+    //   = 10.0 + 2.5 * 1.0 + 2.0 = 14.5.
+    // - If JIT SPARSE path were chosen (not expected here):
+    //   y_result[0] would be y_orig[0] + saxpy_param_a * x[0] + 1.0
+    //   = 10.0 + 2.5 * 1.0 + 1.0 = 13.5.
+    // - If Standard SAXPY path chosen (expected): saxpy_y_result will NOT be modified by actual task data
+    //   because the SAXPY_STANDARD HAL stub in VPUCore currently calls HAL::cpu_saxpy with its own local dummy vectors.
+    //   This is a known limitation of the current stubbing for SAXPY_STANDARD.
 
     std::cout << "\n\n===== VPU EXECUTION AND LEARNING CYCLE COMPLETE =====\n" << std::endl;
 

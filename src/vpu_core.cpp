@@ -48,7 +48,7 @@ void VPUCore::execute_task(VPU_Task& task) {
 
     // 4. LEARN: Use the Feedback Loop to compare prediction and reality.
     LearningContext learning_ctx;
-    LearningContext learning_ctx;
+    // Removed duplicate declaration: LearningContext learning_ctx;
     learning_ctx.path_name = plan.chosen_path_name;
 
     bool is_transform_focused = false;

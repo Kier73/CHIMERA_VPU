@@ -64,8 +64,8 @@ std::vector<ExecutionPlan> Orchestrator::generate_candidate_paths(const std::str
             {"SAXPY_STANDARD", "input", "output"}
         }});
         paths.push_back({"JIT Compiled SAXPY", 0.0, {
-            {"JIT_COMPILE_SAXPY", "input_metadata", "compiled_kernel_id"}, // Conceptual step
-            {"EXECUTE_JIT_SAXPY", "input", "output"}                        // Conceptual step
+            {"TRANSFORM_JIT_COMPILE_SAXPY", "input_metadata", "compiled_kernel_id"}, // Corrected key
+            {"EXECUTE_JIT_SAXPY", "input", "output"}                                 // Conceptual step
         }});
     }
     // TODO: Could add a "JIT Generation" path here for other ops.
@@ -85,6 +85,8 @@ double Orchestrator::simulate_flux_cost(const ExecutionPlan& plan, const DataPro
             total_flux += hw_profile_->transform_costs.at(step.operation_name);
         }
         // Is this a final computation step?
+        // Note: A step should typically be either a transform or an operation, not both.
+        // Current design: TRANSFORM_JIT_COMPILE_SAXPY is only transform, EXECUTE_JIT_SAXPY is only op.
         if(hw_profile_->base_operational_costs.count(step.operation_name)) {
             double base_op_cost = hw_profile_->base_operational_costs.at(step.operation_name);
             double dynamic_cost = 0.0;
@@ -111,15 +113,9 @@ double Orchestrator::simulate_flux_cost(const ExecutionPlan& plan, const DataPro
                 }
             }
             // Note: ELEMENT_WISE_MULTIPLY currently has a base_operational_cost but no dynamic_cost logic.
-            // This is acceptable for now as it's an intermediate step in FFT convolution.
 
             total_flux += (base_op_cost + dynamic_cost);
         }
-        // The following 'else if' blocks for SAXPY_STANDARD and EXECUTE_JIT_SAXPY are removed
-        // as their logic is now incorporated above within the main 'if(hw_profile_->base_operational_costs.count(step.operation_name))' block.
-        // This simplifies the structure to:
-        // 1. If transform_cost, add it.
-        // 2. Else if base_operational_cost, calculate base + specific dynamic_cost, then add.
     }
     return total_flux;
 }

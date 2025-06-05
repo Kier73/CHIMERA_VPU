@@ -4,6 +4,13 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <any>   // Added include for std::any
+
+namespace VPU {
+    struct SAXPYParams {
+        float a;
+    };
+} // namespace VPU
 
 // --- Pillar 2 Data Structures ---
 

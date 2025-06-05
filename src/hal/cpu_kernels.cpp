@@ -178,6 +178,23 @@ void cpu_fft_inverse(const std::vector<double>& complex_in_interleaved, std::vec
     fftw_free(fftw_in_complex);
 }
 
+// --- Specialized SAXPY Stubs for JIT ---
+void cpu_saxpy_sparse_specialized(float a, const std::vector<float>& x, std::vector<float>& y_mut) {
+    std::cout << "    -> [HAL KERNEL] Executing JIT-selected CPU SAXPY (SPARSE SPECIALIZED STUB) for a=" << a << "." << std::endl;
+    if (!y_mut.empty()) {
+        float x_val = x.empty() ? 0.0f : x[0]; // Use x[0] if available, else 0
+        y_mut[0] = y_mut[0] + (a * x_val) + 1.0f;
+    }
+}
+
+void cpu_saxpy_dense_specialized(float a, const std::vector<float>& x, std::vector<float>& y_mut) {
+    std::cout << "    -> [HAL KERNEL] Executing JIT-selected CPU SAXPY (DENSE SPECIALIZED STUB) for a=" << a << "." << std::endl;
+    if (!y_mut.empty()) {
+        float x_val = x.empty() ? 0.0f : x[0]; // Use x[0] if available, else 0
+        y_mut[0] = y_mut[0] + (a * x_val) + 2.0f;
+    }
+}
+
 
 } // namespace HAL
 } // namespace VPU

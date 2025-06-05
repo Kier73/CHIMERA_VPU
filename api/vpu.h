@@ -4,6 +4,7 @@
 #include <string>
 #include <memory>
 #include <cstdint>
+#include <any> // Added include for std::any
 
 namespace VPU {
 
@@ -22,6 +23,7 @@ struct VPU_Task {
     void* data_out;
 
     size_t num_elements;
+    std::any specific_params; // New field
     // Other metadata...
 };
 
