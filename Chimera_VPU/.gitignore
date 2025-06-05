@@ -1,0 +1,44 @@
+# C++ general
+*.o
+*.obj
+*.slo
+*.lo
+*.dll
+*.so
+*.dylib
+*.exe
+*.out
+*.app
+*.ips
+*.ipch
+*.aps
+*.ncb
+*.suo
+*.sdf
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.a
+
+# Build directories
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# IDE-specific files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Other
+*.log
