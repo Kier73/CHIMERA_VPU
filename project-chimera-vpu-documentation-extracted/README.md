@@ -1,14 +1,9 @@
-# Run and deploy your AI Studio app
+# Project Chimera VPU Documentation
 
-This contains everything you need to run your app locally.
+Welcome to the documentation for Project Chimera VPU (Virtual Processing Unit).
 
-## Run Locally
+Project Chimera VPU is an innovative system designed to intelligently optimize computational tasks. It achieves this by analyzing the intrinsic characteristics (or "Flux" cost) of data and operations, and dynamically adapting its execution strategy across available hardware resources. The goal is to provide a flexible and efficient processing solution that learns and improves over time.
 
-**Prerequisites:**  Node.js
+**Detailed technical documentation, including architecture, API specifications, build instructions, and examples, can be found in the [Generated VPU Documentation (README_GENERATED.md)](README_GENERATED.md).**
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Please refer to `README_GENERATED.md` for a comprehensive understanding of the VPU.

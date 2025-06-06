@@ -20,9 +20,9 @@ Project Chimera is organized for modularity, scalability, and a clear separation
       - `gpu_kernels.cu` (file): GPU-specific CUDA/ROCm kernels.
     - `vpu_core.cpp` (file): Main VPU class that orchestrates the pillars.
   - `tests/` (directory):
-    - `e2e_first_loop.cpp` (file): First end-to-end integration test.
+    - `e2e_full_loop.cpp` (file): Main end-to-end integration test.
   - `external/` (directory):
-    - `fftw/` (file): Placeholder for third-party libs like FFTW.
+    - `fftw/` (file): Placeholder for third-party libraries like FFTW.
   - `CMakeLists.txt` (file): The master build file for the project.
 
 ## CMakeLists.txt Content
@@ -59,20 +59,24 @@ target_include_directories(vpu_core PUBLIC
 )
 
 # Link VPU core to its dependencies
-# target_link_libraries(vpu_core PRIVATE FFTW3::fftw3)
+# target_link_libraries(vpu_core PRIVATE FFTW3::fftw3) # Actual CMakeLists.txt links FFTW3
 
 # --- Define Test Executables ---
-add_executable(E2E_First_Loop tests/e2e_first_loop.cpp)
+# The following is a simplified representation. The actual CMakeLists.txt
+# includes additional dependencies like httplib, nlohmann_json, and PkgConfig for FFTW3.
+add_executable(e2e_full_loop tests/e2e_full_loop.cpp)
 
 # Link the test against our VPU library so it can use its functionality
-target_link_libraries(E2E_First_Loop PRIVATE vpu_core)
+target_link_libraries(e2e_full_loop PRIVATE vpu_core)
 
 # Enable testing with CTest
 enable_testing()
-add_test(NAME FirstEndToEndTest COMMAND E2E_First_Loop)
+# The actual CMakeLists.txt also defines a DgmLoopTest.
+add_test(NAME EndToEndLearningTest COMMAND e2e_full_loop)
 ```
+## End-to-End Test Content (tests/e2e_full_loop.cpp)
 
-## End-to-End Test Content (e2e_first_loop.cpp)
+**Note:** The C++ code below is an illustrative example of how a user might interact with a *mocked* version of the VPU API. This example is for conceptual understanding of a test case. The actual VPU API structures (`VPU_Task`, `VPU_Environment`) are defined in `api/vpu.h` and detailed in the "VPU Technical Specification - Version 1.0" section. The mock structures used in this specific test example may differ.
 
 ```cpp
 #include "vpu.h" // The public API
@@ -185,6 +189,74 @@ int main() {
 }
 ```
 
+## Building and Running the VPU
+
+This section provides instructions on how to build the Project Chimera VPU and run the provided end-to-end test.
+
+### Prerequisites
+
+Before you begin, ensure you have the following installed on your system:
+- **CMake:** Version 3.15 or higher. CMake is used to manage the build process.
+- **C++ Compiler:** A compiler that supports C++17 (e.g., GCC, Clang, MSVC).
+- **FFTW3 Library:** The Fastest Fourier Transform in the West library.
+    - On Debian/Ubuntu: `sudo apt-get install libfftw3-dev`
+    - On Fedora: `sudo dnf install fftw-devel`
+    - On macOS (using Homebrew): `brew install fftw`
+
+### Building the Project
+
+The project uses CMake to generate build files for your specific platform and compiler.
+
+1.  **Create a build directory:**
+    It's good practice to create a separate directory for building, to keep the source tree clean.
+    ```bash
+    mkdir build
+    cd build
+    ```
+
+2.  **Configure the project using CMake:**
+    From within the `build` directory, run CMake to configure the project and generate build files. This will detect your compiler and find necessary libraries.
+    ```bash
+    cmake ..
+    ```
+    If CMake has trouble finding FFTW3, you might need to specify its location using `CMAKE_PREFIX_PATH` or by setting `FFTW3_INCLUDE_DIRS` and `FFTW3_LIBRARIES` environment variables or CMake cache variables.
+
+3.  **Compile the project:**
+    After CMake has successfully configured the project, compile it using your build tool.
+    - If you're using Makefiles (common on Linux/macOS):
+      ```bash
+      make
+      ```
+    - Alternatively, you can use the CMake build command (platform-agnostic):
+      ```bash
+      cmake --build .
+      ```
+    This will build the `vpu_core` library and the test executables (`e2e_full_loop` and `dgm_loop_test`) inside the `build` directory.
+
+### Running the Tests
+
+The primary end-to-end test is `e2e_full_loop`.
+
+1.  **Navigate to the build directory:**
+    If you're not already there, `cd` into your `build` directory.
+    ```bash
+    cd /path/to/project/build
+    ```
+    (Replace `/path/to/project/` with the actual path to the ChimeraVPU project root).
+
+2.  **Run the `e2e_full_loop` test directly:**
+    ```bash
+    ./e2e_full_loop
+    ```
+    You should see output indicating the test progress and a success message at the end, similar to the "End-to-End Test Content (tests/e2e_full_loop.cpp)" section.
+
+3.  **Run tests using CTest (Optional):**
+    CMake also generates CTest configurations. You can run all registered tests using:
+    ```bash
+    ctest
+    ```
+    This will execute `EndToEndLearningTest` (which runs `e2e_full_loop`) and `DgmLoopTest` (which runs `dgm_loop_test`).
+
 ## VPU Architecture Pillars
 
 ### Pillar 1: The Universal Flux API & Interceptor (The "Synapse")
@@ -197,15 +269,42 @@ This is the outermost layer of the VPU, providing the entry points for tasks and
 - Function: A simple, developer-friendly library for explicit task marking.
 - Signature Example:
   ```c
-typedef struct {
-  void* function_kernel; // Pointer to the function to execute.
-  void* data_in;
-  size_t data_in_size;
-  void* data_out_buffer;
-  size_t data_out_size;
+typedef struct VPU_Task {
+  // Task Identifier
+  uint64_t task_id;      // Unique identifier for the task
+  std::string task_type; // e.g., "CONVOLUTION", "GEMM", "SAXPY", or a more generic "USER_DEFINED_KERNEL"
+
+  // Kernel Definition
+  enum class KernelType {
+      FUNCTION_POINTER,
+      WASM_BINARY
+  };
+  KernelType kernel_type;
+
+  union Kernel {
+      // Signature: (input_a, input_b, output, num_elements)
+      // This is a simplified signature; a real system might need more flexible kernel signatures.
+      void (*function_pointer)(const void* data_in_a, const void* data_in_b, void* data_out, size_t num_elements);
+      const uint8_t* wasm_binary; // Pointer to WASM module binary data
+
+      Kernel() : function_pointer(nullptr) {} // Default constructor for union
+  } kernel;
+
+  size_t kernel_size; // Optional: Size of the WASM binary, if kernel_type is WASM_BINARY
+
+  // Data payload
+  const void* data_in_a;
+  const void* data_in_b;
+  void* data_out;
+  size_t num_elements; // Relevant for array/vector operations
+
+  // Default constructor to initialize members
+  VPU_Task() : task_id(0), kernel_type(KernelType::FUNCTION_POINTER), kernel_size(0),
+               data_in_a(nullptr), data_in_b(nullptr), data_out(nullptr), num_elements(0) {}
 } VPU_Task;
 
-VPU_Status vpu_execute(VPU_Task* task); // Submits task for flux-optimal execution.
+// VPU_Status vpu_execute(VPU_Task* task); // This is part of VPU_Environment now
+// Forward declaration for VPU_Environment methods will be added below.
   ```
 - Language Bindings: Core C-API with wrappers (Python, Rust, C++).
 
@@ -270,13 +369,12 @@ The Orchestrator is the cognitive core of the VPU. It decides how computation sh
 
 ```json
 {
-  "task_id": "conv_123",
   "optimal_path": "Frequency Domain",
-  "predicted_flux": 8450.0,
+  "predicted_holistic_flux": 8450.0,
   "steps": [
-    { "operation": "TRANSFORM", "kernel": "FFT_4096", "substrate": "GPU_0" },
-    { "operation": "EXECUTE", "kernel": "ELEMENT_WISE_MULTIPLY", "representation": "FP32_COMPLEX", "substrate": "GPU_0" },
-    { "operation": "TRANSFORM", "kernel": "IFFT_4096", "substrate": "GPU_0" }
+    { "operation_name": "TRANSFORM", "input_buffer_id": "input_data", "output_buffer_id": "fft_output", "kernel_details": "FFT_4096_GPU_0" },
+    { "operation_name": "EXECUTE", "input_buffer_id": "fft_output", "output_buffer_id": "multiplied_output", "kernel_details": "ELEMENT_WISE_MULTIPLY_FP32_COMPLEX_GPU_0" },
+    { "operation_name": "TRANSFORM", "input_buffer_id": "multiplied_output", "output_buffer_id": "final_output", "kernel_details": "IFFT_4096_GPU_0" }
   ]
 }
 ```
@@ -343,66 +441,143 @@ A VPU_Task enters Synapse (1) -> Cortex (2) profiles, creates Enriched_Execution
 
 #### VPU_Task
 ```c
-typedef struct VPU_Task {
+typedef struct VPU_Task { // Aligned with api/vpu.h
   // Task Identifier
-  uint64_t task_id;
-
-  // Data Payloads
-  const void* data_in;
-  size_t data_in_size;
-  void* data_out_buffer;
-  size_t data_out_size;
+  uint64_t task_id;      // Unique identifier for the task
+  std::string task_type; // e.g., "CONVOLUTION", "GEMM", "SAXPY", or a more generic "USER_DEFINED_KERNEL"
 
   // Kernel Definition
-  enum { KERNEL_FP, KERNEL_WASM } kernel_type;
-  union {
-    void (*function_pointer)(void*, void*); // Pointer for standard C/C++ kernels
-    const uint8_t* wasm_binary;           // Pointer to WASM module
-  } kernel;
-  size_t kernel_size;
+  enum class KernelType {
+      FUNCTION_POINTER,
+      WASM_BINARY
+  };
+  KernelType kernel_type;
 
-  // Metadata
-  const char* task_type; // e.g., "SORT", "CONVOLUTION", "GEMM"
+  union Kernel {
+      // Signature: (input_a, input_b, output, num_elements)
+      void (*function_pointer)(const void* data_in_a, const void* data_in_b, void* data_out, size_t num_elements);
+      const uint8_t* wasm_binary; // Pointer to WASM module binary data
+
+      Kernel() : function_pointer(nullptr) {} // Default constructor for union
+  } kernel;
+
+  size_t kernel_size; // Optional: Size of the WASM binary, if kernel_type is WASM_BINARY
+
+  // Data payload
+  const void* data_in_a;
+  const void* data_in_b;
+  void* data_out;
+  size_t num_elements; // Relevant for array/vector operations
+
+  // Default constructor to initialize members
+  VPU_Task() : task_id(0), kernel_type(KernelType::FUNCTION_POINTER), kernel_size(0),
+               data_in_a(nullptr), data_in_b(nullptr), data_out(nullptr), num_elements(0) {}
 } VPU_Task;
 ```
 
 #### EnrichedExecutionContext
 ```c
 typedef struct EnrichedExecutionContext {
-  VPU_Task original_task;
+  // VPU_Task original_task; // This is not directly in EnrichedExecutionContext as per vpu_data_structures.h
+                          // Instead, profile and task_type are primary members.
+  std::shared_ptr<const DataProfile> profile; // Profile of the input data
+  std::string task_type;                      // Type of the task (e.g., "CONVOLUTION")
 
-  // Data Profile (Result of Representational Flux Analysis)
-  struct {
-    double amplitude_flux_A_W;
-    double frequency_flux_F_W;
-    double entropy_flux_E_W;
-    uint64_t hamming_weight;
-    double sparsity_ratio; // (1.0 - HW/total_bits)
-  } data_profile;
-
-  // Hardware Profile (Queried from DB)
-  struct {
-    // Costs for operating directly
-    double direct_op_cost;
-    double direct_op_latency;
-    // Potential transformations and their costs
-    // VPU_TransformCost potential_transforms[MAX_TRANSFORMS]; // illustrative
-  } hardware_profile;
+  // The hardware_profile is not part of EnrichedExecutionContext directly,
+  // but is used by Pillar3_Orchestrator when processing it.
 } EnrichedExecutionContext;
 ```
 
 #### ExecutionPlan (JSON Example)
 ```json
 {
-  "task_id": 12345,
+  "chosen_path_name": "Path_Name_Example", // Name of the chosen execution path
   "predicted_holistic_flux": 3104.5,
-  "plan": [
-    { "op": "MOVE_TO_GPU", "source": "data_in", "dest": "gpu_mem_1" },
-    { "op": "EXECUTE_KERNEL", "kernel": "FFT_FORWARD", "input": "gpu_mem_1", "output": "gpu_mem_2" },
+  "steps": [ // Sequence of operations to perform
+    { "operation_name": "MOVE_TO_GPU", "input_buffer_id": "data_in", "output_buffer_id": "gpu_mem_1" },
+    { "operation_name": "FFT_FORWARD", "input_buffer_id": "gpu_mem_1", "output_buffer_id": "gpu_mem_2" },
     // ... more steps ...
-    { "op": "MOVE_FROM_GPU", "source": "gpu_mem_final", "dest": "data_out_buffer" }
+    { "operation_name": "MOVE_FROM_GPU", "input_buffer_id": "gpu_mem_final", "output_buffer_id": "data_out_buffer" }
   ]
 }
+```
+
+### VPU_Environment
+The `VPU_Environment` class encapsulates the VPU runtime, providing an interface to execute tasks and manage the VPU's lifecycle.
+
+```c++
+namespace VPU {
+class VPU_Environment {
+public:
+    VPU_Environment(); // Constructor: Initializes the VPUCore and its pillars.
+    ~VPU_Environment(); // Destructor: Handles cleanup of VPU resources.
+
+    // Executes a given VPU_Task.
+    // The task is processed through the VPU's cognitive cycle (Perceive, Decide, Act, Learn).
+    void execute(VPU_Task& task);
+
+    // Dumps the VPU's current internal beliefs (e.g., learned costs from the HardwareProfile)
+    // to the console for debugging or inspection.
+    void print_beliefs();
+
+    // Provides access to the internal VPUCore instance.
+    // Intended primarily for testing and advanced scenarios.
+    VPUCore* get_core_for_testing();
+private:
+    std::unique_ptr<VPUCore> core; // Pointer to the main VPU implementation.
+};
+} // namespace VPU
+```
+
+### ActualPerformanceRecord
+This structure records the actual measured performance metrics after a task has been executed. It's used by Pillar 5 (Feedback Loop) to compare against predicted performance.
+```c
+struct ActualPerformanceRecord {
+    double observed_holistic_flux = 0.0; // The actual holistic flux calculated from performance counters.
+    // Other metrics like wall-clock time, power usage can be added here.
+};
+```
+
+### LearningContext
+This structure provides necessary information to the learning algorithms within Pillar 5. It helps pinpoint the source of any discrepancy between predicted and actual performance.
+```c
+struct LearningContext {
+    std::string path_name;           // The name of the execution path taken.
+    std::string transform_key;       // Key identifying the transformation step, if applicable.
+    std::string operation_key;       // Key for sensitivity (lambda) learning.
+    std::string main_operation_name; // Key for base operational cost learning.
+};
+```
+
+## Pillar 1: The Universal Flux API & Interceptor (The "Synapse")
+Pillar 1, also known as the "Synapse," serves as the VPU's outermost layer and primary interface for external applications. It is responsible for intercepting computational tasks, packaging them into a standardized `VPU_Task` format, and forwarding them to the VPU's core processing pipeline. This pillar aims to provide a seamless, hardware-agnostic API that allows new and existing software to leverage the VPU's optimization capabilities without significant modification. It supports various interception methods, including a high-level API library (libvpu), a JIT/WASM interface for portable kernels, and potentially deep OS interception hooks for transparently accelerating unmodified applications.
+
+Key responsibilities include:
+- **Task Reception:** Accepting computational tasks from applications via its defined APIs.
+- **Task Validation:** Performing initial checks on the submitted tasks to ensure they are well-formed and contain necessary information.
+- **Standardization:** Converting tasks into the common `VPU_Task` structure used throughout the VPU.
+- **Forwarding:** Passing the standardized tasks to Pillar 2 (Cortex) for profiling and further analysis.
+
+The `Pillar1_Synapse` class encapsulates this functionality:
+```cpp
+namespace VPU {
+class Pillar1_Synapse {
+public:
+    // Constructor: Initializes the Synapse.
+    // May include setup for different interception mechanisms or connections to Pillar 2.
+    Pillar1_Synapse();
+
+    // Public API method to submit a task for VPU processing.
+    // It takes a 'VPU_Task' object (defined in api/vpu.h),
+    // performs validation, and then queues or sends it to the next stage (Pillar 2).
+    // Returns true if the task is accepted, false otherwise.
+    bool submit_task(const VPU_Task& task);
+private:
+    // Internal helper method to validate the incoming VPU_Task.
+    // Checks for required fields, valid data pointers, supported kernel types, etc.
+    bool validate_task(const VPU_Task& task) const;
+};
+} // namespace VPU
 ```
 
 ## Pillar 2 Implementation: RepresentationalFluxAnalyzer
@@ -451,6 +626,7 @@ namespace Pillar2 {
 * @struct DataProfile
 * @brief Standardized output data structure holding all calculated flux metrics.
 * This quantifies the "Arbitrary Contextual Weight" (ACW) of the data.
+* The definition below aligns with `src/vpu_data_structures.h`.
 */
 struct DataProfile {
     // WFC Profile (Digital Binary Domain)
@@ -458,9 +634,17 @@ struct DataProfile {
     double sparsity_ratio = 1.0; // 1.0 = all zeros, 0.0 = all ones
 
     // Omnimorphic Profile (Numerical Sequence Domain)
-    double amplitude_flux_A_W = 0.0;
-    double frequency_flux_F_W = 0.0;
-    double entropy_flux_E_W = 0.0;
+    double amplitude_flux = 0.0;
+    double frequency_flux = 0.0;
+    double entropy_flux = 0.0;
+
+    // IoT Sensor Data
+    double power_draw_watts = 0.0;
+    double temperature_celsius = 0.0;
+    double network_latency_ms = 0.0;
+    double network_bandwidth_mbps = 0.0;
+    double io_throughput_mbps = 0.0;
+    double data_quality_score = 1.0; // Default to perfect quality
 };
 
 /**
@@ -509,7 +693,7 @@ public:
     * @brief Profiles a sequence of floating-point numbers using generalized Omnimorphic metrics.
     * @param data A pointer to an array of doubles.
     * @param num_elements The number of elements in the array.
-    * @return A DataProfile object populated with A(W), F(W), and E(W) flux metrics.
+    * @return A DataProfile object populated with omnimorphic flux metrics (amplitude_flux, frequency_flux, entropy_flux).
     */
     DataProfile profileOmni(const double* data, size_t num_elements) {
         DataProfile profile;
@@ -623,10 +807,15 @@ void print_profile(const VPU::Pillar2::DataProfile& profile) {
     std::cout << "WFC Profile:" << std::endl;
     std::cout << " - Hamming Weight: " << profile.hamming_weight << std::endl;
     std::cout << " - Sparsity Ratio: " << profile.sparsity_ratio << std::endl;
-    std::cout << "Omnimorphic Profile:" << std::endl;
-    std::cout << " - Amplitude Flux (A_W): " << profile.amplitude_flux_A_W << std::endl;
-    std::cout << " - Frequency Flux (F_W): " << profile.frequency_flux_F_W << std::endl;
-    std::cout << " - Entropy Flux (E_W): " << profile.entropy_flux_E_W << std::endl;
+    std::cout << "Omnimorphic Profile (from src/vpu_data_structures.h):" << std::endl;
+    std::cout << " - Amplitude Flux: " << profile.amplitude_flux << std::endl;
+    std::cout << " - Frequency Flux: " << profile.frequency_flux << std::endl;
+    std::cout << " - Entropy Flux: " << profile.entropy_flux << std::endl;
+    // Displaying IoT fields as well, if populated
+    if (profile.power_draw_watts > 0)
+        std::cout << " - Power Draw (Watts): " << profile.power_draw_watts << std::endl;
+    if (profile.temperature_celsius > 0)
+        std::cout << " - Temperature (Celsius): " << profile.temperature_celsius << std::endl;
     std::cout << "--------------------\\n";
 }
 
@@ -647,6 +836,11 @@ int main() { // Renamed to main for a standalone example
     print_profile(dense_profile_wfc);
 
     // --- Scenario 2: Profiling smooth vs noisy numerical data ---
+    // Note: The 'profileOmni' method in RepresentationalFluxAnalyzer uses internal fields
+    // like 'amplitude_flux_A_W'. The 'DataProfile' struct it returns will have these values
+    // mapped to 'amplitude_flux', 'frequency_flux', 'entropy_flux' by the method itself,
+    // or the print_profile function should be aware of the internal names if accessing raw results.
+    // For this example, we assume 'profileOmni' populates the standardized fields correctly.
     std::cout << "\\n===== SCENARIO 2: Omnimorphic Sequence Profiling =====" << std::endl;
     const size_t n_samples = 1024;
     std::vector<double> smooth_signal(n_samples);
@@ -659,7 +853,11 @@ int main() { // Renamed to main for a standalone example
         noisy_signal[i] = (static_cast<double>(rand()) / RAND_MAX) * 2.0 - 1.0; // White noise
     }
 
+    // Assuming analyzer.profileOmni correctly populates the standardized DataProfile fields:
     auto smooth_omni_profile = analyzer.profileOmni(smooth_signal.data(), n_samples);
+    // Example: Manually populate IoT fields for demonstration, as profileOmni doesn't do this.
+    // smooth_omni_profile.power_draw_watts = 15.5;
+    // smooth_omni_profile.temperature_celsius = 25.0;
     std::cout << "Profile for 'Smooth Signal' (Sine Wave):";
     print_profile(smooth_omni_profile);
 
@@ -670,4 +868,65 @@ int main() { // Renamed to main for a standalone example
     return 0;
 }
 */
+```
+
+## Pillar 6: Task Graph Orchestrator
+Pillar 6, the Task Graph Orchestrator, introduces a higher level of dynamic optimization to the VPU by identifying and exploiting patterns in task execution sequences. Its primary function is to observe the flow of operations over time and detect frequently co-occurring sequences of tasks (or steps within tasks) that can be "fused" into a single, more optimized kernel. This process is akin to automatic code optimization or macro-operation formation, tailored to the specific workload being processed by the VPU.
+
+Key functionalities include:
+- **Execution History Tracking:** Recording metadata from `ExecutionPlan`s (from Pillar 3) to build a history of operations.
+- **Pattern Analysis:** Periodically analyzing this history to identify sequences of operations that appear together more often than a defined threshold.
+- **Kernel Fusion:** For identified frequent sequences, Pillar 6 can initiate the creation of a new "fused kernel." This involves:
+    - Defining the interface and implementation of the new kernel (potentially by combining existing kernel code or generating new code via JIT compilation from Pillar 4).
+    - Registering the new fused kernel with the `HAL::KernelLibrary`.
+    - Updating the `HardwareProfile` (in Pillar 2/3) with the performance characteristics and cost model of this new fused kernel.
+- **Adaptive Optimization:** Once a fused kernel is available, Pillar 3 (Orchestrator) can consider it as a candidate path for future tasks, potentially leading to more efficient execution by reducing overhead (e.g., data movement, kernel launch latency).
+
+The `TaskGraphOrchestrator` class implements this logic:
+```cpp
+namespace VPU {
+class TaskGraphOrchestrator {
+public:
+    // Constructor: Initializes the orchestrator.
+    // Takes a shared pointer to the KernelLibrary (to register new fused kernels)
+    // and the HardwareProfile (to update with costs of new kernels).
+    // 'fusion_candidate_threshold' defines how many times a sequence must appear to be considered for fusion.
+    TaskGraphOrchestrator(std::shared_ptr<HAL::KernelLibrary> kernel_lib,
+                          std::shared_ptr<HardwareProfile> hw_profile,
+                          int fusion_candidate_threshold = 10);
+
+    // Called by the VPU core after a task's ExecutionPlan has been processed by Pillar 4.
+    // This method stores relevant information from the plan for future analysis.
+    void record_executed_plan(const ExecutionPlan& plan);
+
+    // This method is triggered periodically (e.g., after a certain number of tasks
+    // have been executed, or during idle periods). It analyzes 'plan_history_'
+    // to find frequent operation sequences and attempts to create fused kernels.
+    void analyze_and_fuse_patterns();
+
+    // Test helpers to allow fine-tuning of fusion parameters and resetting state during tests.
+    void set_fusion_candidate_threshold_for_testing(int threshold); // Adjusts how often a pattern must be seen.
+    void set_analysis_interval_for_testing(int interval); // Adjusts how many tasks trigger an analysis.
+    void reset_task_execution_counter_for_testing(); // Resets the counter for periodic analysis.
+
+private:
+    // Internal method to scan 'plan_history_' and count occurrences of (op1_name, op2_name) sequences.
+    // Returns a map where keys are pairs of operation names and values are their frequencies.
+    std::map<std::pair<std::string, std::string>, int> find_frequent_sequences();
+
+    // Internal method called when a frequent sequence is identified.
+    // This method is responsible for the logic of creating the new fused kernel.
+    // It would interact with the KernelLibrary to add the new kernel and
+    // the HardwareProfile to provide its estimated cost.
+    void create_fused_kernel(const std::string& op1_name, const std::string& op2_name);
+
+    // Internal State:
+    std::vector<ExecutionPlan> plan_history_; // Stores past execution plans.
+    std::shared_ptr<HAL::KernelLibrary> kernel_lib_; // Interface to the VPU's available kernels.
+    std::shared_ptr<HardwareProfile> hw_profile_;   // Interface to the VPU's hardware cost database.
+    int fusion_candidate_threshold_; // Minimum count for a sequence to be a fusion candidate.
+    int task_execution_counter_;     // Counts tasks executed since last analysis.
+    int analysis_interval_;          // Number of tasks between analyses.
+};
+} // namespace VPU
 ```
