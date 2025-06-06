@@ -3,14 +3,28 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept> // Required for std::runtime_error
+#include <random>    // For std::random_device for seeding
 
 namespace VPU {
 
-FeedbackLoop::FeedbackLoop(std::shared_ptr<HardwareProfile> hw_profile, double quark_threshold, double learning_rate, double learning_rate_base_cost)
-: hw_profile_(hw_profile), QUARK_THRESHOLD(quark_threshold), LEARNING_RATE(learning_rate), LEARNING_RATE_BASE_COST(learning_rate_base_cost)
+FeedbackLoop::FeedbackLoop(std::shared_ptr<HardwareProfile> hw_profile,
+                           double quark_threshold,
+                           double learning_rate,
+                           double learning_rate_base_cost,
+                           double exploration_rate) // Added exploration_rate
+: hw_profile_(hw_profile),
+  QUARK_THRESHOLD(quark_threshold),
+  LEARNING_RATE(learning_rate),
+  LEARNING_RATE_BASE_COST(learning_rate_base_cost),
+  exploration_rate_(exploration_rate),
+  distribution_(0.0, 1.0) // Initialize distribution
 {
     if (!hw_profile_) {
         throw std::runtime_error("FeedbackLoop's HardwareProfile cannot be null.");
+    }
+    // Seed the random number generator
+    random_generator_.seed(std::random_device{}());
+    std::cout << "[Pillar 5] FeedbackLoop initialized with exploration rate: " << exploration_rate_ * 100 << "%." << std::endl;
     }
 }
 
@@ -96,5 +110,26 @@ void FeedbackLoop::learn_from_feedback(const LearningContext& context, double pr
         std::cout << "    -> No specific belief component (transform, base op cost, or sensitivity) could be targeted for update based on context." << std::endl;
     }
 }
+
+// Determines if the VPU should choose a suboptimal path for exploration
+bool FeedbackLoop::should_explore() {
+    double random_value = distribution_(random_generator_);
+    bool explore = random_value < exploration_rate_;
+    if (explore) {
+        std::cout << "[Pillar 5] FeedbackLoop: Decision to EXPLORE (Random value " << random_value << " < Exploration rate " << exploration_rate_ << ")" << std::endl;
+    }
+    return explore;
+}
+
+// Placeholder for apply_learning, if it were to be used.
+// void FeedbackLoop::apply_learning(double& belief, double observed, double predicted) {
+//     // Implementation would go here
+// }
+
+void FeedbackLoop::force_exploration_rate_for_testing(double rate) {
+    exploration_rate_ = rate;
+    std::cout << "[Pillar 5] FeedbackLoop: Exploration rate FORCED to " << exploration_rate_ * 100 << "% for testing." << std::endl;
+}
+
 
 } // namespace VPU

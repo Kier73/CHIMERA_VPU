@@ -35,6 +35,11 @@ void VPU_Environment::print_beliefs() {
     }
 }
 
+// Test helper method implementation
+VPUCore* VPU_Environment::get_core_for_testing() {
+    return core.get();
+}
+
 
 VPUCore::VPUCore() {
     std::cout << "[VPU System] Core starting up..." << std::endl;
@@ -47,6 +52,9 @@ VPUCore::VPUCore() {
     pillar3_orchestrator_ = std::make_unique<Orchestrator>(hw_profile_);
     pillar4_cerebellum_ = std::make_unique<Cerebellum>(kernel_lib_);
     pillar5_feedback_ = std::make_unique<FeedbackLoop>(hw_profile_);
+    // Initialize Pillar 6, ensuring hw_profile_ and kernel_lib_ are already initialized
+    pillar6_task_graph_orchestrator_ = std::make_unique<TaskGraphOrchestrator>(kernel_lib_, hw_profile_);
+
 
     std::cout << "[VPU System] All pillars are online. Ready." << std::endl;
 }
@@ -63,22 +71,56 @@ void VPUCore::execute_task(VPU_Task& task) {
     // 1. PERCEIVE: Use the Cortex to analyze the data.
     EnrichedExecutionContext context = pillar2_cortex_->analyze(task);
 
-    // 2. DECIDE: Use the Orchestrator to select the best execution plan.
-    ExecutionPlan plan = pillar3_orchestrator_->determine_optimal_path(context);
+    // 2. DECIDE: Use the Orchestrator to get candidate execution plans.
+    std::vector<ExecutionPlan> candidate_plans = pillar3_orchestrator_->determine_optimal_path(context);
 
-    // 3. ACT: Use the Cerebellum to execute the plan and record performance.
-    ActualPerformanceRecord perf_record = pillar4_cerebellum_->execute(plan, task);
+    if (candidate_plans.empty()) {
+        std::cerr << "[VPUCore] Error: Orchestrator returned no candidate plans for task ID: " << task.task_id << ". Aborting." << std::endl;
+        // Optionally, set task status to error
+        return;
+    }
+
+    ExecutionPlan chosen_plan = candidate_plans.front(); // Default to the best plan
+    bool explored = false;
+
+    if (pillar5_feedback_->should_explore()) {
+        if (candidate_plans.size() > 1) {
+            // Simple exploration: choose the second-best plan if available.
+            // More sophisticated strategies could be: random choice from non-optimal,
+            // or a plan with specific characteristics to test.
+            chosen_plan = candidate_plans[1];
+            explored = true;
+            std::cout << "[VPUCore] EXPLORATION: Chose suboptimal plan '" << chosen_plan.chosen_path_name
+                      << "' (Predicted Flux: " << chosen_plan.predicted_holistic_flux
+                      << ") instead of optimal '" << candidate_plans.front().chosen_path_name
+                      << "' (Predicted Flux: " << candidate_plans.front().predicted_holistic_flux
+                      << ")" << std::endl;
+        } else {
+            std::cout << "[VPUCore] EXPLORATION desired, but no alternative paths available for task ID: " << task.task_id << "." << std::endl;
+        }
+    } else {
+         std::cout << "[VPUCore] Chose optimal plan '" << chosen_plan.chosen_path_name << "' with predicted flux " << chosen_plan.predicted_holistic_flux << "." << std::endl;
+    }
+
+    // 3. ACT: Use the Cerebellum to execute the chosen plan and record performance.
+    ActualPerformanceRecord perf_record = pillar4_cerebellum_->execute(chosen_plan, task);
 
     // 4. LEARN: Use the Feedback Loop to compare prediction and reality.
+    // Crucially, use the chosen_plan's name and its predicted_holistic_flux for learning.
     LearningContext learning_ctx;
-    learning_ctx.path_name = plan.chosen_path_name;
+    learning_ctx.path_name = chosen_plan.chosen_path_name;
+    if (explored) {
+        learning_ctx.path_name += " (Exploratory)"; // Mark exploratory paths in context
+    }
+
 
     bool is_transform_focused = false;
 
-    if (plan.chosen_path_name.find("FFT") != std::string::npos) {
+    // Corrected: Use chosen_plan for LearningContext creation
+    if (chosen_plan.chosen_path_name.find("FFT") != std::string::npos) {
         learning_ctx.transform_key = "TRANSFORM_TIME_TO_FREQ";
         is_transform_focused = true;
-    } else if (plan.chosen_path_name.find("JIT Compiled SAXPY") != std::string::npos) {
+    } else if (chosen_plan.chosen_path_name.find("JIT Compiled SAXPY") != std::string::npos) {
         learning_ctx.transform_key = "TRANSFORM_JIT_COMPILE_SAXPY";
         learning_ctx.main_operation_name = "EXECUTE_JIT_SAXPY";
         learning_ctx.operation_key = "lambda_SAXPY_generic";
@@ -92,7 +134,8 @@ void VPUCore::execute_task(VPU_Task& task) {
                 learning_ctx.operation_key = "lambda_Conv_Amp";
             }
         } else if (task.task_type == "GEMM") {
-            for (const auto& step : plan.steps) {
+            // Corrected: Use chosen_plan for LearningContext creation
+            for (const auto& step : chosen_plan.steps) {
                 if (step.operation_name == "GEMM_NAIVE" || step.operation_name == "GEMM_FLUX_ADAPTIVE") {
                     learning_ctx.main_operation_name = step.operation_name;
                     break;
@@ -106,7 +149,14 @@ void VPUCore::execute_task(VPU_Task& task) {
             }
         }
     }
-    pillar5_feedback_->learn_from_feedback(learning_ctx, plan.predicted_holistic_flux, perf_record);
+    // Pass the predicted flux of the *actually executed plan* to learn_from_feedback
+    pillar5_feedback_->learn_from_feedback(learning_ctx, chosen_plan.predicted_holistic_flux, perf_record);
+
+    // 5. RECORD & ADAPT (Pillar 6): Record the executed plan for graph analysis and potential fusion.
+    // The analyze_and_fuse_patterns() is called periodically from within record_executed_plan().
+    if (pillar6_task_graph_orchestrator_) {
+        pillar6_task_graph_orchestrator_->record_executed_plan(chosen_plan);
+    }
 }
 
 void VPUCore::initialize_beliefs() {
@@ -115,18 +165,31 @@ void VPUCore::initialize_beliefs() {
     // These would typically be loaded from a config file or calibration routine
 
     // Example Beliefs for Operations (Cost per unit of Flux, arbitrary units)
-    (*hw_profile_)["lambda_Conv_Amp"] = { {"CPU_generic", 1.0}, {"GPU_generic", 0.5} };
-    (*hw_profile_)["lambda_Sparsity"] = { {"CPU_generic", 1.2}, {"GPU_generic", 0.6} };
-    (*hw_profile_)["lambda_SAXPY_generic"] = { {"CPU_generic", 0.8}, {"GPU_generic", 0.3} };
-     (*hw_profile_)["lambda_GEMM_ElementCount"] = { {"CPU_generic", 1.0} };
+    // This is the old way, keeping it for now if anything relies on this exact structure.
+    // (*hw_profile_)["lambda_Conv_Amp"] = { {"CPU_generic", 1.0}, {"GPU_generic", 0.5} };
+    // (*hw_profile_)["lambda_Sparsity"] = { {"CPU_generic", 1.2}, {"GPU_generic", 0.6} };
 
+    // New way for Pillar 3 & 6 compatibility (flat map for base_operational_costs & transform_costs)
+    // These are conceptual base costs for operations if they were run on a generic CPU.
+    hw_profile_->base_operational_costs["CONV_DIRECT"] = 200.0;
+    hw_profile_->base_operational_costs["ELEMENT_WISE_MULTIPLY"] = 50.0;
+    hw_profile_->base_operational_costs["GEMM_NAIVE"] = 500.0;
+    hw_profile_->base_operational_costs["GEMM_FLUX_ADAPTIVE"] = 450.0;
+    hw_profile_->base_operational_costs["SAXPY_STANDARD"] = 100.0;
+    hw_profile_->base_operational_costs["EXECUTE_JIT_SAXPY"] = 70.0; // Cost of executing a JITted kernel
+
+    // Sensitivities (as used by Pillar 3)
+    hw_profile_->flux_sensitivities["lambda_Conv_Amp"] = 1.0;
+    hw_profile_->flux_sensitivities["lambda_Conv_Freq"] = 0.8;
+    hw_profile_->flux_sensitivities["lambda_Sparsity"] = 150.0; // Higher impact for sparsity
+    hw_profile_->flux_sensitivities["lambda_SAXPY_generic"] = 0.5;
 
     // Example Beliefs for Transformations (Absolute cost in Flux units)
-    (*hw_profile_)["TRANSFORM_TIME_TO_FREQ"] = { {"CPU_generic", 500.0}, {"GPU_generic", 100.0} };
-    (*hw_profile_)["TRANSFORM_FREQ_TO_TIME"] = { {"CPU_generic", 450.0}, {"GPU_generic", 90.0} };
-    (*hw_profile_)["TRANSFORM_JIT_COMPILE_SAXPY"] = { {"CPU_generic", 2000.0} }; // JIT typically CPU-bound for compilation
+    hw_profile_->transform_costs["FFT_FORWARD"] = 300.0;
+    hw_profile_->transform_costs["FFT_INVERSE"] = 280.0;
+    hw_profile_->transform_costs["JIT_COMPILE_SAXPY"] = 1000.0; // Cost of the JIT compilation step itself
 
-    std::cout << "[VPUCore] Initial beliefs populated." << std::endl;
+    std::cout << "[VPUCore] Initial beliefs populated (with Pillar3/6 compatible costs)." << std::endl;
 }
 
 void VPUCore::initialize_hal() {
@@ -140,13 +203,31 @@ void VPUCore::initialize_hal() {
 void VPUCore::print_current_beliefs() {
     std::cout << "\n===== VPU Current Beliefs (Hardware Profile) =====" << std::endl;
     if (hw_profile_) {
-        for (const auto& pair : *hw_profile_) {
-            std::cout << "Metric/Transform: " << pair.first << std::endl;
-            for (const auto& substrate_cost : pair.second) {
-                std::cout << "  - Substrate: " << substrate_cost.first
-                          << ", Cost: " << substrate_cost.second << std::endl;
-            }
+        std::cout << "Base Operational Costs:" << std::endl;
+        for (const auto& pair : hw_profile_->base_operational_costs) {
+            std::cout << "  - Op: " << pair.first << ", Cost: " << pair.second << std::endl;
         }
+        std::cout << "Transform Costs:" << std::endl;
+        for (const auto& pair : hw_profile_->transform_costs) {
+            std::cout << "  - Transform: " << pair.first << ", Cost: " << pair.second << std::endl;
+        }
+        std::cout << "Flux Sensitivities (Lambdas):" << std::endl;
+        for (const auto& pair : hw_profile_->flux_sensitivities) {
+            std::cout << "  - Lambda: " << pair.first << ", Value: " << pair.second << std::endl;
+        }
+        // This part is for the old structure, can be removed if fully migrated
+        // std::cout << "Raw Hardware Profile Data (if any using old structure):" << std::endl;
+        // for (const auto& pair : *hw_profile_) { // Assuming hw_profile_ is still the map itself for this part
+        //     if (hw_profile_->base_operational_costs.find(pair.first) == hw_profile_->base_operational_costs.end() &&
+        //         hw_profile_->transform_costs.find(pair.first) == hw_profile_->transform_costs.end() &&
+        //         hw_profile_->flux_sensitivities.find(pair.first) == hw_profile_->flux_sensitivities.end()) {
+        //         std::cout << "Metric/Transform (Old Style): " << pair.first << std::endl;
+        //         // for (const auto& substrate_cost : pair.second) { // This line would error as pair.second is not a map
+        //         //     std::cout << "  - Substrate: " << substrate_cost.first
+        //         //               << ", Cost: " << substrate_cost.second << std::endl;
+        //         // }
+        //     }
+        // }
     } else {
         std::cout << "No hardware profile loaded." << std::endl;
     }

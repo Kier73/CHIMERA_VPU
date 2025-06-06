@@ -17,6 +17,14 @@ struct DataProfile {
     double amplitude_flux = 0.0;
     double frequency_flux = 0.0;
     double entropy_flux = 0.0;
+
+    // IoT Sensor Data
+    double power_draw_watts = 0.0;
+    double temperature_celsius = 0.0;
+    double network_latency_ms = 0.0;
+    double network_bandwidth_mbps = 0.0;
+    double io_throughput_mbps = 0.0;
+    double data_quality_score = 1.0; // Default to perfect quality
 };
 
 // Contains all information for the Orchestrator to make a decision.

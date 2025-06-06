@@ -25,13 +25,21 @@ struct HardwareProfile {
 class Orchestrator {
 public:
     explicit Orchestrator(std::shared_ptr<HardwareProfile> hw_profile);
-    ExecutionPlan determine_optimal_path(const EnrichedExecutionContext& context);
+    std::vector<ExecutionPlan> determine_optimal_path(const EnrichedExecutionContext& context); // Changed return type
+
+    // Method to enable/disable LLM usage
+    void set_llm_path_generation(bool enable);
 
 private:
     std::vector<ExecutionPlan> generate_candidate_paths(const std::string& task_type);
     double simulate_flux_cost(const ExecutionPlan& plan, const DataProfile& profile);
 
+    // (Conceptual) Method to generate paths with LLM
+    std::vector<ExecutionPlan> generate_paths_with_llm(const EnrichedExecutionContext& context);
+
     std::shared_ptr<HardwareProfile> hw_profile_;
+    // Member variable to control LLM usage
+    bool use_llm_for_paths_;
 };
 
 } // namespace VPU

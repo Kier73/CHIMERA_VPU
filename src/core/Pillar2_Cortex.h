@@ -10,6 +10,7 @@
 #include "vpu_data_structures.h" // For EnrichedExecutionContext, DataProfile
 #include "vpu.h"                 // For VPU_Task (Corrected from "api/vpu.h")
 #include <memory>                // For std::make_shared
+#include "IoTClient.h"           // For IoTClient integration
 
 namespace VPU { // Changed namespace to VPU
 
@@ -30,9 +31,18 @@ namespace VPU { // Changed namespace to VPU
         // Analyzes the data from VPU_Task and returns EnrichedExecutionContext
         EnrichedExecutionContext analyze(const VPU_Task& task);
 
+        // Test helper to override IoT data for the next analyze call
+        void set_next_iot_profile_override(const DataProfile& override_profile);
+
     private:
         // Profiles the omnimorphic characteristics of a given data stream
         OmniProfile profileOmni(const double* data, int num_elements);
+
+        // IoT Client for fetching external sensor data
+        std::unique_ptr<IoTClient> iot_client_;
+
+        // Member to store the override profile
+        std::unique_ptr<DataProfile> next_iot_override_;
         // Helper methods, if any, can be declared here.
     };
 
