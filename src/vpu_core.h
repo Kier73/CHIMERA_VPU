@@ -30,10 +30,12 @@ public: // Adding public getters for testing purposes
     TaskGraphOrchestrator* get_task_graph_orchestrator_for_testing() { return pillar6_task_graph_orchestrator_.get(); }
     HardwareProfile* get_hardware_profile_for_testing() { return hw_profile_.get(); }
     HAL::KernelLibrary* get_kernel_library_for_testing() { return kernel_lib_.get(); }
+    const ActualPerformanceRecord& get_last_performance_record() const;
 
 private: // Original private members resume here
     std::shared_ptr<HardwareProfile> hw_profile_;
     std::shared_ptr<HAL::KernelLibrary> kernel_lib_;
+    ActualPerformanceRecord last_perf_record_; // To store the latest performance record
 
     // The five pillars of the VPU cognitive cycle
     std::unique_ptr<Pillar1_Synapse> pillar1_synapse_; // Added

@@ -15,14 +15,16 @@ class FluxJITEngine {
 public:
     FluxJITEngine(); // Added constructor
     // This function decides if generating a custom kernel is worthwhile.
-    HAL::GenericKernel compile_saxpy_for_data(VPU_Task& task); // Modified signature
+    // JIT kernels are fully specialized and capture their data, so they are nullary.
+    std::function<HAL::KernelFluxReport()> compile_saxpy_for_data(VPU_Task& task);
 
     // Method to enable/disable LLM usage for JIT
     void set_llm_jit_generation(bool enable);
 
 private:
     // (Conceptual) Method to generate kernel with LLM
-    HAL::GenericKernel generate_kernel_with_llm(const VPU_Task& task);
+    // Also returns a nullary, fully specialized JIT kernel.
+    std::function<HAL::KernelFluxReport()> generate_kernel_with_llm(const VPU_Task& task);
 
     // Member variable to control LLM usage for JIT
     bool use_llm_for_jit_;
@@ -38,9 +40,9 @@ public:
     FluxJITEngine* get_jit_engine_for_testing() { return &jit_engine_; }
 
 private:
-    std::shared_ptr<HAL::KernelLibrary> kernel_lib_;
+    std::shared_ptr<HAL::KernelLibrary> kernel_lib_; // Stores std::function<KernelFluxReport(VPU_Task& task)>
     FluxJITEngine jit_engine_;
-    HAL::GenericKernel last_jit_compiled_kernel_; // To store JIT kernel
+    std::function<HAL::KernelFluxReport()> last_jit_compiled_kernel_; // JIT kernel is nullary
 };
 
 } // namespace VPU

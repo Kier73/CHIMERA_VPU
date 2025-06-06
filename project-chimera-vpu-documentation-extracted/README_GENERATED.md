@@ -1,37 +1,36 @@
-# Project Chimera: VPU Documentation
+# Dynamic Flux VPU: Documentation
 
-Project Chimera is organized for modularity, scalability, and a clear separation between the public API, the core logic, and the hardware-specific implementations. It aims to create a Virtual Processing Unit (VPU) that can intelligently optimize computational tasks by understanding their intrinsic "Flux" cost and adapting its execution strategy accordingly.
+Dynamic Flux VPU is organized for modularity, scalability, and a clear separation between the public API, the core logic, and the hardware-specific implementations. It aims to create a Virtual Processing Unit (VPU) that can intelligently optimize computational tasks by understanding their intrinsic "Flux" cost and adapting its execution strategy accordingly.
 
 ## Repository Structure
 
-- `CHIMERA_VPU/` (directory):
-  - `api/` (directory):
-    - `vpu.h` (file): Public-facing API for developers to include.
-  - `src/` (directory):
-    - `core/` (directory):
-      - `Pillar1_Synapse.h/cpp` (file): Task interception & API implementation.
-      - `Pillar2_Cortex.h/cpp` (file): Flux Profiler & Hardware Database.
-      - `Pillar3_Orchestrator.h/cpp` (file): Decision engine & path simulation.
-      - `Pillar4_Cerebellum.h/cpp` (file): Dispatcher & JIT/runtime management.
-      - `Pillar5_Feedback.h/cpp` (file): Learning loop and belief updates.
-    - `hal/` (directory):
-      - `hal.h` (file): Common interface for all hardware kernels.
-      - `cpu_kernels.cpp` (file): Optimized SIMD/AVX kernels.
-      - `gpu_kernels.cu` (file): GPU-specific CUDA/ROCm kernels.
-    - `vpu_core.cpp` (file): Main VPU class that orchestrates the pillars.
-  - `tests/` (directory):
-    - `e2e_first_loop.cpp` (file): First end-to-end integration test.
-  - `external/` (directory):
-    - `fftw/` (file): Placeholder for third-party libs like FFTW.
-  - `CMakeLists.txt` (file): The master build file for the project.
+- `api/` (directory):
+  - `vpu.h` (file): Public-facing API for developers to include.
+- `src/` (directory):
+  - `core/` (directory):
+    - `Pillar1_Synapse.h/cpp` (file): Task interception & API implementation.
+    - `Pillar2_Cortex.h/cpp` (file): Flux Profiler & Hardware Database.
+    - `Pillar3_Orchestrator.h/cpp` (file): Decision engine & path simulation.
+    - `Pillar4_Cerebellum.h/cpp` (file): Dispatcher & JIT/runtime management.
+    - `Pillar5_Feedback.h/cpp` (file): Learning loop and belief updates.
+  - `hal/` (directory):
+    - `hal.h` (file): Common interface for all hardware kernels.
+    - `cpu_kernels.cpp` (file): Optimized SIMD/AVX kernels.
+    - `gpu_kernels.cu` (file): GPU-specific CUDA/ROCm kernels.
+  - `vpu_core.cpp` (file): Main VPU class that orchestrates the pillars.
+- `tests/` (directory):
+  - `e2e_first_loop.cpp` (file): First end-to-end integration test.
+- `external/` (directory):
+  - `fftw/` (file): Placeholder for third-party libs like FFTW.
+- `CMakeLists.txt` (file): The master build file for the project.
 
 ## CMakeLists.txt Content
 
 ```cmake
-# Project Chimera VPU Build System
+# Dynamic Flux VPU Build System
 cmake_minimum_required(VERSION 3.15)
 
-project(ChimeraVPU CXX)
+project(DynamicFluxVPU CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
