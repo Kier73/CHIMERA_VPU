@@ -1,0 +1,44 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Chimera Documentation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'primary': '#1E3A8A', // Deep Blue
+            'secondary': '#10B981', // Emerald Green
+            'accent': '#F59E0B', // Amber
+            'background': '#F3F4F6', // Light Gray
+            'text-primary': '#1F2937', // Dark Gray
+            'text-secondary': '#4B5563', // Medium Gray
+            'code-bg': '#282c34', // Dark background for code
+            'code-text': '#abb2bf', // Light text for code
+          }
+        }
+      }
+    }
+  </script>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.1.0/",
+    "react": "https://esm.sh/react@^19.1.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "@heroicons/react/": "https://esm.sh/@heroicons/react@^2.2.0/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="bg-background text-text-primary font-sans leading-relaxed">
+  <div id="root"></div>
+  <!-- Main application script -->
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
