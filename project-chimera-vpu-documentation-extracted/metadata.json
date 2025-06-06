@@ -1,0 +1,5 @@
+{
+  "name": "Project Chimera VPU Documentation",
+  "description": "An interactive exploration of the Project Chimera VPU architecture, design principles, and core components. This application provides detailed documentation on the VPU's five pillars, repository structure, build system, and technical specifications.",
+  "requestFramePermissions": []
+}

@@ -1,31 +1,49 @@
 #include "vpu_core.h"
 #include <iostream>
-#include <string> // Required for std::string
-#include <vector> // Required for std::vector in HAL calls
-#include <memory> // Required for std::make_unique, std::make_shared
+#include <string>
+#include <vector>
+#include <memory>
 
-// Removed the local stub definition of VPU::Cortex from here.
-// VPUCore will now use VPU::Cortex directly.
+// Ensure Pillar1_Synapse.h is included via vpu_core.h or directly if needed.
+// It should be included by vpu_core.h already.
 
 namespace VPU {
 
-// --- Public API Implementation ---
-VPU_Environment::VPU_Environment() : core(std::make_unique<VPUCore>()) {}
-VPU_Environment::~VPU_Environment() {}
-void VPU_Environment::execute(VPU_Task& task) { core->execute_task(task); }
-void VPU_Environment::print_beliefs() { core->print_current_beliefs(); }
+// VPU_Environment methods (assuming they are defined elsewhere or here)
+// If VPU_Environment methods are in this file, they would typically be:
+VPU_Environment::VPU_Environment() : core(std::make_unique<VPUCore>()) {
+    std::cout << "[VPU_Environment] Created and VPUCore initialized." << std::endl;
+}
+
+VPU_Environment::~VPU_Environment() {
+    std::cout << "[VPU_Environment] Destroyed." << std::endl;
+}
+
+void VPU_Environment::execute(VPU_Task& task) {
+    if (core) {
+        core->execute_task(task);
+    } else {
+        std::cerr << "[VPU_Environment] Error: VPUCore not initialized." << std::endl;
+    }
+}
+
+void VPU_Environment::print_beliefs() {
+    if (core) {
+        core->print_current_beliefs();
+    } else {
+        std::cerr << "[VPU_Environment] Error: VPUCore not initialized." << std::endl;
+    }
+}
 
 
-// --- VPUCore Implementation ---
 VPUCore::VPUCore() {
     std::cout << "[VPU System] Core starting up..." << std::endl;
-
-    // On initialization, all pillars are constructed and wired together.
     initialize_beliefs();
     initialize_hal();
 
     // Instantiate each pillar, providing shared access to necessary resources.
-    pillar2_cortex_ = std::make_unique<VPU::Cortex>(); // Corrected instantiation
+    pillar1_synapse_ = std::make_unique<Pillar1_Synapse>(); // Added
+    pillar2_cortex_ = std::make_unique<VPU::Cortex>();
     pillar3_orchestrator_ = std::make_unique<Orchestrator>(hw_profile_);
     pillar4_cerebellum_ = std::make_unique<Cerebellum>(kernel_lib_);
     pillar5_feedback_ = std::make_unique<FeedbackLoop>(hw_profile_);
@@ -33,12 +51,17 @@ VPUCore::VPUCore() {
     std::cout << "[VPU System] All pillars are online. Ready." << std::endl;
 }
 
-
-// The full Perceive -> Decide -> Act -> Learn loop.
 void VPUCore::execute_task(VPU_Task& task) {
+    // 0. SUBMIT & VALIDATE: Pass task through Pillar1 for initial intake.
+    std::cout << "[VPUCore] Submitting task ID: " << task.task_id << " to Pillar1_Synapse." << std::endl;
+    if (!pillar1_synapse_->submit_task(task)) {
+        std::cerr << "[VPUCore] Task ID: " << task.task_id << " rejected by Pillar1_Synapse. Aborting execution." << std::endl;
+        return; // Task failed initial validation or processing in Pillar1
+    }
+    std::cout << "[VPUCore] Task ID: " << task.task_id << " successfully processed by Pillar1_Synapse." << std::endl;
+
     // 1. PERCEIVE: Use the Cortex to analyze the data.
     EnrichedExecutionContext context = pillar2_cortex_->analyze(task);
-    // Direct use of RepresentationalFluxAnalyzer, profileOmni, or manual DataProfile creation is removed.
 
     // 2. DECIDE: Use the Orchestrator to select the best execution plan.
     ExecutionPlan plan = pillar3_orchestrator_->determine_optimal_path(context);
@@ -48,34 +71,25 @@ void VPUCore::execute_task(VPU_Task& task) {
 
     // 4. LEARN: Use the Feedback Loop to compare prediction and reality.
     LearningContext learning_ctx;
-    LearningContext learning_ctx;
     learning_ctx.path_name = plan.chosen_path_name;
 
     bool is_transform_focused = false;
 
     if (plan.chosen_path_name.find("FFT") != std::string::npos) {
         learning_ctx.transform_key = "TRANSFORM_TIME_TO_FREQ";
-        // Potentially set main_operation_name = "ELEMENT_WISE_MULTIPLY" if its base cost is to be learned
-        // operation_key might be less relevant here or specific to ELEMENT_WISE_MULTIPLY if it had one
         is_transform_focused = true;
     } else if (plan.chosen_path_name.find("JIT Compiled SAXPY") != std::string::npos) {
         learning_ctx.transform_key = "TRANSFORM_JIT_COMPILE_SAXPY";
         learning_ctx.main_operation_name = "EXECUTE_JIT_SAXPY";
-        learning_ctx.operation_key = "lambda_SAXPY_generic"; // Sensitivity for the execution part
+        learning_ctx.operation_key = "lambda_SAXPY_generic";
         is_transform_focused = true;
     }
 
-    // If not primarily a transform-focused error path, identify main operation and its sensitivity.
-    // This block will also execute for JIT paths to set keys for the execution part, if not already set,
-    // but the JIT path above is more specific.
-    // For pure direct paths, is_transform_focused will be false.
-    if (!is_transform_focused || !learning_ctx.main_operation_name.empty()) { // Also process if main_op already set (e.g. JIT)
+    if (!is_transform_focused || !learning_ctx.main_operation_name.empty()) {
         if (task.task_type == "CONVOLUTION") {
-            // This implies a direct convolution path was chosen if is_transform_focused is false
-            if (!is_transform_focused) { // Only set if not an FFT path
+            if (!is_transform_focused) {
                 learning_ctx.main_operation_name = "CONV_DIRECT";
-                learning_ctx.operation_key = "lambda_Conv_Amp"; // Correct sensitivity key for CONV_DIRECT
-                // Or, could be "lambda_Conv_Freq" or a combination. For now, Amp is primary.
+                learning_ctx.operation_key = "lambda_Conv_Amp";
             }
         } else if (task.task_type == "GEMM") {
             for (const auto& step : plan.steps) {
@@ -86,114 +100,57 @@ void VPUCore::execute_task(VPU_Task& task) {
             }
             learning_ctx.operation_key = "lambda_Sparsity";
         } else if (task.task_type == "SAXPY") {
-            if (!is_transform_focused) { // Standard SAXPY path (JIT already handled)
+            if (!is_transform_focused) {
                  learning_ctx.main_operation_name = "SAXPY_STANDARD";
                  learning_ctx.operation_key = "lambda_SAXPY_generic";
             }
-            // If it was JIT, main_op and op_key are already set for EXECUTE_JIT_SAXPY
         }
     }
-
     pillar5_feedback_->learn_from_feedback(learning_ctx, plan.predicted_holistic_flux, perf_record);
 }
 
 void VPUCore::initialize_beliefs() {
     hw_profile_ = std::make_shared<HardwareProfile>();
-    // Load initial beliefs (our "common sense" priors). These will be refined over time.
-    hw_profile_->base_operational_costs = {
-        {"CONV_DIRECT", 50000.0},
-        {"ELEMENT_WISE_MULTIPLY", 10000.0}, // Part of the FFT path
-        {"GEMM_NAIVE", 100000.0},
-        {"GEMM_FLUX_ADAPTIVE", 300000.0},  // Higher base cost due to setup overhead
-        {"SAXPY_STANDARD", 20000.0},
-        {"EXECUTE_JIT_SAXPY", 5000.0}
-    };
-    hw_profile_->transform_costs = {
-        {"TRANSFORM_TIME_TO_FREQ", 200000.0}, // Cost for one direction (e.g. R2C)
-        {"FFT_FORWARD", 200000.0}, // Explicitly for FFT forward
-        {"FFT_INVERSE", 200000.0},  // Explicitly for FFT inverse
-        {"TRANSFORM_JIT_COMPILE_SAXPY", 75000.0} // Cost of JIT compilation itself
-    };
-    hw_profile_->flux_sensitivities = {
-        // {"lambda_A", 100.0}, // Removed old generic lambda_A
-        {"lambda_Conv_Amp", 100.0},      // Sensitivity of Convolution to amplitude flux
-        {"lambda_Conv_Freq", 150.0},     // Sensitivity of Convolution to frequency flux
-        {"lambda_Sparsity", 5000000.0},  // Sensitivity to density for GEMM
-        {"lambda_SAXPY_generic", 10.0}   // Example sensitivity for SAXPY (remains)
-    };
+    // Populate with some baseline beliefs (costs)
+    // These would typically be loaded from a config file or calibration routine
+
+    // Example Beliefs for Operations (Cost per unit of Flux, arbitrary units)
+    (*hw_profile_)["lambda_Conv_Amp"] = { {"CPU_generic", 1.0}, {"GPU_generic", 0.5} };
+    (*hw_profile_)["lambda_Sparsity"] = { {"CPU_generic", 1.2}, {"GPU_generic", 0.6} };
+    (*hw_profile_)["lambda_SAXPY_generic"] = { {"CPU_generic", 0.8}, {"GPU_generic", 0.3} };
+     (*hw_profile_)["lambda_GEMM_ElementCount"] = { {"CPU_generic", 1.0} };
+
+
+    // Example Beliefs for Transformations (Absolute cost in Flux units)
+    (*hw_profile_)["TRANSFORM_TIME_TO_FREQ"] = { {"CPU_generic", 500.0}, {"GPU_generic", 100.0} };
+    (*hw_profile_)["TRANSFORM_FREQ_TO_TIME"] = { {"CPU_generic", 450.0}, {"GPU_generic", 90.0} };
+    (*hw_profile_)["TRANSFORM_JIT_COMPILE_SAXPY"] = { {"CPU_generic", 2000.0} }; // JIT typically CPU-bound for compilation
+
+    std::cout << "[VPUCore] Initial beliefs populated." << std::endl;
 }
 
 void VPUCore::initialize_hal() {
     kernel_lib_ = std::make_shared<HAL::KernelLibrary>();
-    // These would be bound to actual data from VPU_Task in Cerebellum::execute
-    // For now, they are parameterless lambdas as per HAL::GenericKernel type.
-    // The actual data handling is conceptual in Cerebellum.
-    // Dummy const vectors for input arguments where needed by HAL function signatures.
-    const std::vector<double> const_dummy_double_in_vec;
-    const std::vector<float> const_dummy_float_in_vec;
-
-    (*kernel_lib_)["CONV_DIRECT"] = [](){
-        std::cout << "    -> [HAL KERNEL STUB] CONV_DIRECT called." << std::endl;
-        // HAL::cpu_conv_direct(params...);
-    };
-    (*kernel_lib_)["FFT_FORWARD"] = [const_dummy_double_in_vec](){
-        std::vector<double> dummy_out_vec; // Mutable lvalue for output
-        HAL::cpu_fft_forward(const_dummy_double_in_vec, dummy_out_vec);
-    };
-    (*kernel_lib_)["ELEMENT_WISE_MULTIPLY"] = [](){
-        std::cout << "    -> [HAL KERNEL STUB] ELEMENT_WISE_MULTIPLY called." << std::endl;
-        // HAL::cpu_element_wise_multiply(params...);
-    };
-    (*kernel_lib_)["FFT_INVERSE"] = [const_dummy_double_in_vec](){ // const_dummy_double_in_vec is for the first param
-        std::vector<double> dummy_out_vec; // Mutable lvalue for output (second param)
-        int N_dummy = const_dummy_double_in_vec.empty() ? 0 : (const_dummy_double_in_vec.size()/2 - 1) * 2; // Infer N if possible, or set default for stub
-        if (N_dummy <= 0 && !const_dummy_double_in_vec.empty()) N_dummy = 10; // Default N if input not empty but N calc is weird for stub
-        else if (const_dummy_double_in_vec.empty()) N_dummy = 0; // Handles empty input case for N
-
-        HAL::cpu_fft_inverse(const_dummy_double_in_vec, dummy_out_vec, N_dummy);
-        std::cout << "    -> [HAL KERNEL STUB CALL] FFT_INVERSE (via actual cpu_fft_inverse) called with N_dummy=" << N_dummy << std::endl;
-    };
-    (*kernel_lib_)["GEMM_NAIVE"] = [const_dummy_float_in_vec](){
-        std::vector<float> dummy_out_vec; // Mutable lvalue for output
-        HAL::cpu_gemm_naive(const_dummy_float_in_vec, const_dummy_float_in_vec, dummy_out_vec, 0,0,0);
-    };
-    (*kernel_lib_)["GEMM_FLUX_ADAPTIVE"] = [const_dummy_float_in_vec](){
-        std::vector<float> dummy_out_vec; // Mutable lvalue for output
-        HAL::cpu_gemm_flux_adaptive(const_dummy_float_in_vec, const_dummy_float_in_vec, dummy_out_vec, 0,0,0);
-    };
-    (*kernel_lib_)["SAXPY_STANDARD"] = [](){ // Removed [this] capture, not needed for stub
-        // Conceptual: need to get actual data for task from VPU_Task passed to Cerebellum
-        // For this stub, we just call the HAL function with dummy values.
-        // HAL::cpu_saxpy expects float, const vector<float>&, vector<float>&
-        std::vector<float> x_dummy, y_dummy;
-        // x_dummy.resize(AppropriateSize); // In a real scenario, size might be known.
-        // y_dummy.resize(AppropriateSize);
-        HAL::cpu_saxpy(1.0f, x_dummy, y_dummy); // Example alpha = 1.0f
-        std::cout << "    -> [HAL KERNEL STUB] SAXPY_STANDARD (via cpu_saxpy) called." << std::endl;
-    };
-    (*kernel_lib_)["EXECUTE_JIT_SAXPY"] = [](){
-        std::cout << "    -> [HAL KERNEL STUB] Conceptually executing JIT-compiled SAXPY." << std::endl;
-        // Actual execution would use a kernel compiled by FluxJITEngine passed via Cerebellum
-    };
-
+    // In a real system, this might scan for plugins or pre-register kernels
+    // For now, we can manually register a few.
+    // Example: kernel_lib_->register_kernel("SAXPY_CPU", some_cpu_saxpy_function_ptr);
+    std::cout << "[VPUCore] HAL and Kernel Library initialized." << std::endl;
 }
 
-
 void VPUCore::print_current_beliefs() {
-    std::cout << "\n===== VPU CURRENT BELIEFS =====\n";
-    std::cout << "--- Base Operational Costs ---\n";
-    for(const auto& [key, val] : hw_profile_->base_operational_costs) {
-        std::cout << "  '" << key << "': " << val << "\n";
+    std::cout << "\n===== VPU Current Beliefs (Hardware Profile) =====" << std::endl;
+    if (hw_profile_) {
+        for (const auto& pair : *hw_profile_) {
+            std::cout << "Metric/Transform: " << pair.first << std::endl;
+            for (const auto& substrate_cost : pair.second) {
+                std::cout << "  - Substrate: " << substrate_cost.first
+                          << ", Cost: " << substrate_cost.second << std::endl;
+            }
+        }
+    } else {
+        std::cout << "No hardware profile loaded." << std::endl;
     }
-    std::cout << "--- Transform Costs ---\n";
-    for(const auto& [key, val] : hw_profile_->transform_costs) {
-        std::cout << "  '" << key << "': " << val << "\n";
-    }
-    std::cout << "--- Flux Sensitivities ---\n";
-    for(const auto& [key, val] : hw_profile_->flux_sensitivities) {
-        std::cout << "  '" << key << "': " << val << "\n";
-    }
-     std::cout << "==============================\n" << std::endl;
+    std::cout << "==============================================\n" << std::endl;
 }
 
 } // namespace VPU
