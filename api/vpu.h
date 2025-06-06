@@ -62,6 +62,9 @@ public:
     // Dumps the VPU's current internal beliefs for inspection.
     void print_beliefs();
 
+    // Method to get access to VPUCore for testing purposes
+    VPUCore* get_core_for_testing();
+
 private:
     std::unique_ptr<VPUCore> core;
 };

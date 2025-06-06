@@ -8,15 +8,29 @@
 // The actual fftw3.h is already included in Pillar2_Cortex.h
 // No need for simulated FFTW functions or typedefs here.
 
+#include "nlohmann/json.hpp" // For JSON parsing (used conceptually for IoT data)
+
 namespace VPU { // Changed namespace
 
     Cortex::Cortex() { // Renamed class
-        // Constructor implementation (if any)
+        // Initialize IoTClient with placeholder values
+        try {
+            iot_client_ = std::make_unique<IoTClient>("localhost", 12345);
+            std::cout << "[Pillar 2] Cortex: IoTClient initialized conceptually for localhost:12345." << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[Pillar 2] Cortex: Failed to initialize IoTClient: " << e.what() << std::endl;
+            iot_client_ = nullptr; // Ensure it's null if construction fails
+        }
         std::cout << "[Pillar 2] Cortex initialized." << std::endl;
     }
 
     Cortex::~Cortex() { // Renamed class
         // Destructor implementation (if any)
+    }
+
+    void Cortex::set_next_iot_profile_override(const DataProfile& override_profile) {
+        next_iot_override_ = std::make_unique<DataProfile>(override_profile);
+        std::cout << "[Pillar 2] Cortex: Test override for IoT data set for next analyze call." << std::endl;
     }
 
     // Public method to analyze task data
@@ -45,6 +59,73 @@ namespace VPU { // Changed namespace
         std::cout << "  -> OmniProfile generated: AF=" << data_profile_ptr->amplitude_flux
                   << ", FF=" << data_profile_ptr->frequency_flux
                   << ", EF=" << data_profile_ptr->entropy_flux << std::endl;
+
+        // --- Populate DataProfile with IoT Sensor Data (Conceptual/Dummy) ---
+        if (next_iot_override_) {
+            std::cout << "  -> Using TEST OVERRIDE for IoT data." << std::endl;
+            data_profile_ptr->power_draw_watts = next_iot_override_->power_draw_watts;
+            data_profile_ptr->temperature_celsius = next_iot_override_->temperature_celsius;
+            data_profile_ptr->network_latency_ms = next_iot_override_->network_latency_ms;
+            data_profile_ptr->network_bandwidth_mbps = next_iot_override_->network_bandwidth_mbps;
+            data_profile_ptr->io_throughput_mbps = next_iot_override_->io_throughput_mbps;
+            data_profile_ptr->data_quality_score = next_iot_override_->data_quality_score;
+            next_iot_override_.reset(); // Clear override after use
+        } else if (iot_client_) {
+            std::cout << "  -> Fetching IoT data (conceptually)..." << std::endl;
+            try {
+                // Conceptual calls (commented out to avoid runtime errors without actual IoT server)
+                // nlohmann::json power_data = iot_client_->getDeviceStatus("power_sensor_001");
+                // nlohmann::json thermal_data = iot_client_->getDeviceStatus("thermal_sensor_001");
+                // nlohmann::json network_data = iot_client_->getDeviceStatus("network_monitor_001");
+                // nlohmann::json storage_data = iot_client_->getDeviceStatus("storage_monitor_001");
+                // nlohmann::json quality_data = iot_client_->getDeviceStatus("data_quality_sensor_001");
+
+                // Using dummy data for now
+                data_profile_ptr->power_draw_watts = 75.5; // Example value
+                // if (!power_data.empty() && power_data.contains("current_watts")) {
+                //     data_profile_ptr->power_draw_watts = power_data["current_watts"].get<double>();
+                // }
+
+                data_profile_ptr->temperature_celsius = 65.2; // Example value
+                // if (!thermal_data.empty() && thermal_data.contains("current_temp_c")) {
+                //     data_profile_ptr->temperature_celsius = thermal_data["current_temp_c"].get<double>();
+                // }
+
+                data_profile_ptr->network_latency_ms = 15.3; // Example value
+                // if (!network_data.empty() && network_data.contains("latency_ms")) {
+                //     data_profile_ptr->network_latency_ms = network_data["latency_ms"].get<double>();
+                // }
+
+                data_profile_ptr->network_bandwidth_mbps = 980.0; // Example value
+                // if (!network_data.empty() && network_data.contains("bandwidth_mbps")) {
+                //     data_profile_ptr->network_bandwidth_mbps = network_data["bandwidth_mbps"].get<double>();
+                // }
+
+                data_profile_ptr->io_throughput_mbps = 250.0; // Example value
+                // if(!storage_data.empty() && storage_data.contains("throughput_mbps")) {
+                //    data_profile_ptr->io_throughput_mbps = storage_data["throughput_mbps"].get<double>();
+                // }
+
+                data_profile_ptr->data_quality_score = 0.95; // Example value
+                // if(!quality_data.empty() && quality_data.contains("score")) {
+                //    data_profile_ptr->data_quality_score = quality_data["score"].get<double>();
+                // }
+
+                std::cout << "  -> IoT Data (Dummy): Power=" << data_profile_ptr->power_draw_watts << "W"
+                          << ", Temp=" << data_profile_ptr->temperature_celsius << "C"
+                          << ", NetLatency=" << data_profile_ptr->network_latency_ms << "ms"
+                          << ", NetBw=" << data_profile_ptr->network_bandwidth_mbps << "Mbps"
+                          << ", IoThroughput=" << data_profile_ptr->io_throughput_mbps << "Mbps"
+                          << ", DataQuality=" << data_profile_ptr->data_quality_score << std::endl;
+
+            } catch (const std::exception& e) {
+                std::cerr << "  -> Error fetching/processing IoT data: " << e.what() << std::endl;
+                // Keep default values in DataProfile if IoT fetch fails
+            }
+        } else {
+            std::cout << "  -> IoTClient not available, skipping IoT data fetch." << std::endl;
+        }
+        // --- End of IoT Sensor Data Population ---
 
         return {data_profile_ptr, task.task_type};
     }

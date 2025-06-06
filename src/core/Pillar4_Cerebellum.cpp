@@ -99,9 +99,40 @@ ActualPerformanceRecord Cerebellum::execute(const ExecutionPlan& plan, VPU_Task&
     return { observed_flux };
 }
 
+// FluxJITEngine Implementation
+FluxJITEngine::FluxJITEngine() : use_llm_for_jit_(false) {}
+
+void FluxJITEngine::set_llm_jit_generation(bool enable) {
+    use_llm_for_jit_ = enable;
+    std::cout << "    -> [JIT Engine] LLM JIT generation " << (enable ? "enabled." : "disabled.") << std::endl;
+}
+
+HAL::GenericKernel FluxJITEngine::generate_kernel_with_llm(const VPU_Task& task) {
+    std::cout << "    -> [JIT Engine] LLM JIT kernel generation called for task: " << task.task_type << std::endl;
+    // In a real scenario, this would involve:
+    // 1. Formatting the task details (data profile, operation type, constraints) into a prompt.
+    // 2. Sending the prompt to a code-generation LLM.
+    // 3. Parsing the LLM's response (e.g., C++/CUDA/Metal code as a string).
+    // 4. Compiling this code string dynamically (e.g., using NVRTC for CUDA, or system compiler for C++).
+    // 5. Loading the compiled function and returning a std::function or similar callable.
+    // For now, returning nullptr to signify conceptual implementation.
+    return nullptr;
+}
+
 // Conceptual JIT engine logic
 HAL::GenericKernel FluxJITEngine::compile_saxpy_for_data(VPU_Task& task) { // Modified signature
     std::cout << "    -> [JIT Engine] SAXPY compilation request for task_type: " << task.task_type << std::endl;
+
+    if (use_llm_for_jit_) {
+        std::cout << "    -> [JIT Engine] Attempting LLM-based JIT generation..." << std::endl;
+        HAL::GenericKernel llm_kernel = generate_kernel_with_llm(task);
+        if (llm_kernel) {
+            std::cout << "    -> [JIT Engine] LLM JIT generation successful." << std::endl;
+            return llm_kernel;
+        } else {
+            std::cout << "    -> [JIT Engine] LLM JIT generation failed or not applicable, falling back to traditional JIT." << std::endl;
+        }
+    }
 
     const float* x_data = static_cast<const float*>(task.data_in_a);
     // 'a' for SAXPY is not directly in VPU_Task. Using a fixed value for now.

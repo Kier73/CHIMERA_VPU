@@ -29,6 +29,12 @@ add_library(vpu_core
     src/core/Pillar3_Orchestrator.cpp
     src/core/Pillar4_Cerebellum.cpp
     src/core/Pillar5_Feedback.cpp
+    src/core/Pillar6_TaskGraphOrchestrator.cpp # Added Pillar 6
+    # DGM Files
+    src/dgm/dgm_archive.cpp
+    src/dgm/dgm_selection.cpp
+    src/dgm/dgm_evolution.cpp
+    src/dgm/dgm_controller.cpp
 )
 
 # Public headers for the library are in the 'api' directory.
@@ -55,6 +61,10 @@ add_executable(e2e_full_loop tests/e2e_full_loop.cpp)
 # Link the test against our VPU library so it can use its functionality
 target_link_libraries(e2e_full_loop PRIVATE vpu_core)
 
+add_executable(dgm_loop_test tests/dgm_loop_test.cpp)
+target_link_libraries(dgm_loop_test PRIVATE vpu_core)
+
 # --- Enable Testing with CTest ---
 enable_testing()
 add_test(NAME EndToEndLearningTest COMMAND e2e_full_loop)
+add_test(NAME DgmLoopTest COMMAND dgm_loop_test)
