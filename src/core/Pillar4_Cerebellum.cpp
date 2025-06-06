@@ -1,7 +1,9 @@
 #include "core/Pillar4_Cerebellum.h"
+#include "hal/hal_utils.h" // For calculate_data_hamming_weight (will be used later)
 #include <chrono>
 #include <stdexcept> // Required for std::runtime_error
 #include <iostream>  // Required for std::cout
+#include <vector>    // Required for std::vector (will be used later)
 
 namespace VPU {
 
@@ -15,88 +17,76 @@ Cerebellum::Cerebellum(std::shared_ptr<HAL::KernelLibrary> kernel_lib) : kernel_
 ActualPerformanceRecord Cerebellum::execute(const ExecutionPlan& plan, VPU_Task& task) {
     std::cout << "[Pillar 4] Cerebellum: Beginning execution of plan '" << plan.chosen_path_name << "'." << std::endl;
 
-    // Use high-precision timer to capture ground truth
     auto start_time = std::chrono::high_resolution_clock::now();
+    last_jit_compiled_kernel_ = nullptr; // This type is now std::function<KernelFluxReport()>
 
-    // Ensure last_jit_compiled_kernel_ is reset at the beginning of execution.
-    last_jit_compiled_kernel_ = nullptr;
-
-    // The Memory Manager holds intermediate results between steps.
     std::map<std::string, void*> memory_buffers;
     memory_buffers["input"] = const_cast<void*>(task.data_in_a);
     memory_buffers["output"] = task.data_out;
 
-    // Allocate temporary buffers if needed
-    // This is a simplified way to handle intermediate data for multi-step plans.
-    // A real system would have a dedicated memory manager.
     std::vector<double> temp_buffer_1_double;
     std::vector<double> temp_buffer_2_double;
-    std::vector<float> temp_buffer_1_float;
-    std::vector<float> temp_buffer_2_float;
+    // std::vector<float> temp_buffer_1_float; // Not used in current example path
+    // std::vector<float> temp_buffer_2_float; // Not used in current example path
 
-    // Basic type handling for temp buffers based on task type (conceptual)
-    if (task.task_type == "CONVOLUTION" && task.num_elements > 0) { // FFTs in this example use double
-        temp_buffer_1_double.resize(task.num_elements); // Adjusted for FFT output size if necessary
+    if (task.task_type == "CONVOLUTION" && task.num_elements > 0) { // Example, not fully plumbed
+        temp_buffer_1_double.resize(task.num_elements);
         temp_buffer_2_double.resize(task.num_elements);
         memory_buffers["temp_freq"] = temp_buffer_1_double.data();
         memory_buffers["temp_result"] = temp_buffer_2_double.data();
-    } else if (task.task_type == "GEMM" && task.num_elements > 0) { // GEMM uses float
-        // GEMM temp buffers might not be needed depending on the plan, but shown for completeness
-        // For GEMM, num_elements might represent M*K for A, K*N for B, M*N for C.
-        // This simple temp buffer allocation might not be sufficient for all GEMM plans.
     }
 
+    uint64_t total_cycle_cost = 0;
+    uint64_t total_hw_in_cost = 0;
+    uint64_t total_hw_out_cost = 0;
+    HAL::KernelFluxReport report_from_kernel;
 
     for (const auto& step : plan.steps) {
         std::cout << "  -> Dispatching Step: " << step.operation_name << std::endl;
+        report_from_kernel = {0,0,0}; // Reset report for steps that don't generate one (e.g. JIT_COMPILE)
 
         if (step.operation_name == "JIT_COMPILE_SAXPY") {
             std::cout << "  -> [Cerebellum] Requesting JIT compilation for SAXPY..." << std::endl;
             last_jit_compiled_kernel_ = jit_engine_.compile_saxpy_for_data(task);
-            // No actual execution for this step in terms of HAL call, it's a "transform"
+            // JIT compilation step itself doesn't return a flux report in this context.
+            // The cost of JIT compilation could be tracked separately if needed.
         } else if (step.operation_name == "EXECUTE_JIT_SAXPY") {
             if (last_jit_compiled_kernel_) {
                 std::cout << "  -> [Cerebellum] Executing JIT-compiled SAXPY kernel..." << std::endl;
-                last_jit_compiled_kernel_();
+                report_from_kernel = last_jit_compiled_kernel_(); // JIT kernel now returns a report
             } else {
                 std::cerr << "  -> [Cerebellum ERROR] EXECUTE_JIT_SAXPY called but no JIT kernel was compiled!" << std::endl;
                 throw std::runtime_error("EXECUTE_JIT_SAXPY called without a compiled JIT kernel.");
             }
-        } else if (kernel_lib_->count(step.operation_name)) { // Existing logic for standard kernels
-            auto kernel_func = kernel_lib_->at(step.operation_name);
-
-            // CONCEPTUAL KERNEL EXECUTION:
-            // This is highly simplified. A real system needs to:
-            // 1. Map string buffer IDs (e.g., "input", "temp_freq") to actual memory pointers.
-            // 2. Cast these void* pointers to the correct types expected by the kernel.
-            // 3. Pass all necessary arguments (alpha, M, N, K, etc.) to the kernel.
-            // The current HAL::GenericKernel is void(), so it can't take args directly.
-            // This would require a more complex HAL interface or per-kernel dispatch logic.
-
-            // Example: If it was a SAXPY kernel (which it isn't with current GenericKernel)
-            // if (step.operation_name == "SAXPY_OP_KEY") {
-            //    auto saxpy_kernel = reinterpret_cast<void(*)(float, const float*, float*)>(kernel_func); // Risky cast
-            //    float* in_ptr = static_cast<float*>(memory_buffers[step.input_buffer_id]);
-            //    float* out_ptr = static_cast<float*>(memory_buffers[step.output_buffer_id]);
-            //    // saxpy_kernel(alpha_value, in_ptr, out_ptr);
-            // } else {
-                 kernel_func(); // Execute the generic kernel from HAL as defined (void()).
-            // }
-
+        } else if (kernel_lib_->count(step.operation_name)) {
+            auto kernel_func = kernel_lib_->at(step.operation_name); // Type is std::function<KernelFluxReport(VPU_Task& task)>
+            report_from_kernel = kernel_func(task); // Standard kernels now pass the task
         } else {
             throw std::runtime_error("Kernel not found in library: " + step.operation_name);
         }
+
+        total_cycle_cost += report_from_kernel.cycle_cost;
+        total_hw_in_cost += report_from_kernel.hw_in_cost;
+        total_hw_out_cost += report_from_kernel.hw_out_cost;
     }
 
     auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::nano> latency_ns = end_time - start_time;
+    std::chrono::duration<double, std::nano> latency_ns_duration = end_time - start_time;
 
-    // For this prototype, we'll equate flux with nanoseconds of latency.
-    // A real system would have a more complex formula involving power, etc.
-    double observed_flux = latency_ns.count();
+    ActualPerformanceRecord result_record;
+    result_record.observed_latency_ns = latency_ns_duration.count();
+    result_record.observed_cycle_cost = total_cycle_cost;
+    result_record.observed_hw_in_cost = total_hw_in_cost;
+    result_record.observed_hw_out_cost = total_hw_out_cost;
+    result_record.observed_holistic_flux = static_cast<double>(total_cycle_cost + total_hw_in_cost + total_hw_out_cost);
 
-    std::cout << "  ==> Execution Complete. Observed Flux (Latency ns): " << observed_flux << std::endl;
-    return { observed_flux };
+    std::cout << "  ==> Execution Complete. Observed Latency (ns): " << result_record.observed_latency_ns << std::endl;
+    std::cout << "      Cycle Cost: " << result_record.observed_cycle_cost
+              << ", HW IN Cost: " << result_record.observed_hw_in_cost
+              << ", HW OUT Cost: " << result_record.observed_hw_out_cost << std::endl;
+    std::cout << "      Holistic Flux: " << result_record.observed_holistic_flux << std::endl;
+
+    return result_record;
 }
 
 // FluxJITEngine Implementation
@@ -107,7 +97,8 @@ void FluxJITEngine::set_llm_jit_generation(bool enable) {
     std::cout << "    -> [JIT Engine] LLM JIT generation " << (enable ? "enabled." : "disabled.") << std::endl;
 }
 
-HAL::GenericKernel FluxJITEngine::generate_kernel_with_llm(const VPU_Task& task) {
+// Return type is now std::function<HAL::KernelFluxReport()>
+std::function<HAL::KernelFluxReport()> FluxJITEngine::generate_kernel_with_llm(const VPU_Task& task) {
     std::cout << "    -> [JIT Engine] LLM JIT kernel generation called for task: " << task.task_type << std::endl;
     // In a real scenario, this would involve:
     // 1. Formatting the task details (data profile, operation type, constraints) into a prompt.
@@ -120,25 +111,26 @@ HAL::GenericKernel FluxJITEngine::generate_kernel_with_llm(const VPU_Task& task)
 }
 
 // Conceptual JIT engine logic
-HAL::GenericKernel FluxJITEngine::compile_saxpy_for_data(VPU_Task& task) { // Modified signature
+// Return type is now std::function<HAL::KernelFluxReport()>
+std::function<HAL::KernelFluxReport()> FluxJITEngine::compile_saxpy_for_data(VPU_Task& task) {
     std::cout << "    -> [JIT Engine] SAXPY compilation request for task_type: " << task.task_type << std::endl;
 
     if (use_llm_for_jit_) {
         std::cout << "    -> [JIT Engine] Attempting LLM-based JIT generation..." << std::endl;
-        HAL::GenericKernel llm_kernel = generate_kernel_with_llm(task);
-        if (llm_kernel) {
-            std::cout << "    -> [JIT Engine] LLM JIT generation successful." << std::endl;
+        // llm_kernel is now std::function<HAL::KernelFluxReport()>
+        std::function<HAL::KernelFluxReport()> llm_kernel = generate_kernel_with_llm(task);
+        if (llm_kernel) { // Check if a valid function was returned
+            std::cout << "    -> [JIT Engine] LLM JIT generation successful (conceptually)." << std::endl;
             return llm_kernel;
         } else {
-            std::cout << "    -> [JIT Engine] LLM JIT generation failed or not applicable, falling back to traditional JIT." << std::endl;
+            std::cout << "    -> [JIT Engine] LLM JIT generation failed or not applicable/stubbed, falling back to traditional JIT." << std::endl;
         }
     }
 
     const float* x_data = static_cast<const float*>(task.data_in_a);
-    // 'a' for SAXPY is not directly in VPU_Task. Using a fixed value for now.
-    float fixed_a = 1.0f;
+    float fixed_a = 1.0f; // Placeholder for SAXPY 'a' parameter from task if available
 
-    std::vector<float> x_vec_analysis;
+    std::vector<float> x_vec_analysis; // For sparsity check
     if (x_data && task.num_elements > 0) {
        x_vec_analysis.assign(x_data, x_data + task.num_elements);
     }
@@ -146,51 +138,74 @@ HAL::GenericKernel FluxJITEngine::compile_saxpy_for_data(VPU_Task& task) { // Mo
     size_t zero_count = 0;
     if (!x_vec_analysis.empty()) {
         for (float val : x_vec_analysis) {
-            if (val == 0.0f) {
-                zero_count++;
-            }
+            if (val == 0.0f) zero_count++;
         }
     }
-    double sparsity_ratio = x_vec_analysis.empty() ? 0.0 : static_cast<double>(zero_count) / x_vec_analysis.size();
+    // Ensure num_elements is not zero to avoid division by zero if x_vec_analysis is empty due to num_elements being 0.
+    double sparsity_ratio = x_vec_analysis.empty() ? 1.0 : static_cast<double>(zero_count) / x_vec_analysis.size(); // Default to fully sparse if empty
     std::cout << "    -> [JIT Engine] Data sparsity for input 'x': " << sparsity_ratio << std::endl;
 
-    // Capture necessary data for the returned kernel by value or pointer as appropriate.
-    // Pointers (like p_data_in_a, p_data_out) assume their lifetime is managed by VPU_Task and valid during execution.
     void* p_data_in_a = const_cast<void*>(task.data_in_a);
     void* p_data_out = task.data_out;
-    size_t num_elements_captured = task.num_elements; // Capture num_elements
+    size_t num_elements_captured = task.num_elements;
+
+    // This lambda captures necessary variables and performs the SAXPY operation,
+    // then calculates and returns the KernelFluxReport.
+    auto saxpy_execution_lambda =
+        [fixed_a, p_data_in_a, p_data_out, num_elements_captured](bool use_sparse_specialization) -> HAL::KernelFluxReport {
+
+        if (!p_data_in_a || !p_data_out || num_elements_captured == 0) {
+            std::cerr << "JIT KERNEL (SAXPY): Invalid data pointers or zero elements." << std::endl;
+            return {0, 0, 0}; // Return zero flux report on error
+        }
+
+        const float* x_ptr = static_cast<const float*>(p_data_in_a);
+        float* y_ptr = static_cast<float*>(p_data_out);
+
+        // Create std::vector copies to pass to existing HAL functions.
+        // This is for compatibility with HAL functions expecting vectors.
+        // A more optimized JIT might work directly with pointers or have specialized data structures.
+        std::vector<float> x_temp_vec(x_ptr, x_ptr + num_elements_captured);
+        std::vector<float> y_temp_vec(y_ptr, y_ptr + num_elements_captured); // y is input/output for SAXPY
+
+        HAL::KernelFluxReport report;
+
+        // Calculate hw_in_cost: Hamming weight of input vector x and initial state of y
+        report.hw_in_cost = HAL::calculate_data_hamming_weight(x_temp_vec.data(), x_temp_vec.size() * sizeof(float));
+        report.hw_in_cost += HAL::calculate_data_hamming_weight(y_temp_vec.data(), y_temp_vec.size() * sizeof(float)); // y's initial state
+
+        // Execute the appropriate SAXPY kernel
+        if (use_sparse_specialization) {
+            HAL::cpu_saxpy_sparse_specialized(fixed_a, x_temp_vec, y_temp_vec);
+        } else {
+            HAL::cpu_saxpy_dense_specialized(fixed_a, x_temp_vec, y_temp_vec);
+        }
+
+        // Copy the result from the temporary y_temp_vec back to the original memory location p_data_out
+        for(size_t i = 0; i < num_elements_captured; ++i) {
+            y_ptr[i] = y_temp_vec[i];
+        }
+
+        // Calculate hw_out_cost: Hamming weight of the output vector y (after computation)
+        report.hw_out_cost = HAL::calculate_data_hamming_weight(y_temp_vec.data(), y_temp_vec.size() * sizeof(float));
+
+        // Estimate cycle_cost: For SAXPY, operations are num_elements * (1 multiply + 1 add)
+        report.cycle_cost = num_elements_captured * 2;
+
+        return report;
+    };
 
     if (sparsity_ratio > 0.5) {
-        std::cout << "    -> [JIT Engine] Data is sparse. Providing 'SPARSE SAXPY' logic." << std::endl;
-        return [fixed_a, p_data_in_a, p_data_out, num_elements_captured](){
-            if (!p_data_in_a || !p_data_out || num_elements_captured == 0) {
-                std::cerr << "JIT SPARSE KERNEL: Invalid data pointers or zero elements." << std::endl;
-                return;
-            }
-            const float* x = static_cast<const float*>(p_data_in_a);
-            float* y = static_cast<float*>(p_data_out);
-
-            std::vector<float> x_temp(x, x + num_elements_captured);
-            std::vector<float> y_temp(y, y + num_elements_captured);
-            HAL::cpu_saxpy_sparse_specialized(fixed_a, x_temp, y_temp);
-            // Copy back result from y_temp to p_data_out
-            for(size_t i=0; i<num_elements_captured; ++i) y[i] = y_temp[i];
+        std::cout << "    -> [JIT Engine] Data is sparse. Providing 'SPARSE SAXPY' wrapper." << std::endl;
+        // Return a lambda that calls saxpy_execution_lambda with use_sparse_specialization = true
+        return [saxpy_execution_lambda]() -> HAL::KernelFluxReport {
+            return saxpy_execution_lambda(true);
         };
     } else {
-        std::cout << "    -> [JIT Engine] Data is dense. Providing 'DENSE SAXPY' logic." << std::endl;
-        return [fixed_a, p_data_in_a, p_data_out, num_elements_captured](){
-            if (!p_data_in_a || !p_data_out || num_elements_captured == 0) {
-                std::cerr << "JIT DENSE KERNEL: Invalid data pointers or zero elements." << std::endl;
-                return;
-            }
-            const float* x = static_cast<const float*>(p_data_in_a);
-            float* y = static_cast<float*>(p_data_out);
-
-            std::vector<float> x_temp(x, x + num_elements_captured);
-            std::vector<float> y_temp(y, y + num_elements_captured);
-            HAL::cpu_saxpy_dense_specialized(fixed_a, x_temp, y_temp);
-            // Copy back result from y_temp to p_data_out
-            for(size_t i=0; i<num_elements_captured; ++i) y[i] = y_temp[i];
+        std::cout << "    -> [JIT Engine] Data is dense. Providing 'DENSE SAXPY' wrapper." << std::endl;
+        // Return a lambda that calls saxpy_execution_lambda with use_sparse_specialization = false
+        return [saxpy_execution_lambda]() -> HAL::KernelFluxReport {
+            return saxpy_execution_lambda(false);
         };
     }
 }

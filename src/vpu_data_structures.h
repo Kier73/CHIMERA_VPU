@@ -53,8 +53,11 @@ struct ExecutionPlan {
 
 // The ground-truth record of what happened during execution.
 struct ActualPerformanceRecord {
-    double observed_holistic_flux = 0.0;
-    // Could also include wall-clock time, power usage, etc.
+    double observed_latency_ns = 0.0; // Renamed from observed_holistic_flux
+    uint64_t observed_cycle_cost = 0;
+    uint64_t observed_hw_in_cost = 0;
+    uint64_t observed_hw_out_cost = 0;
+    double observed_holistic_flux = 0.0; // Will be sum of cycle + hw_in + hw_out costs
 };
 
 // Key information for the learning algorithm to pinpoint the source of an error.

@@ -27,6 +27,19 @@ void VPU_Environment::execute(VPU_Task& task) {
     }
 }
 
+const ActualPerformanceRecord& VPU_Environment::get_last_performance_record() const {
+    if (core) {
+        return core->get_last_performance_record();
+    } else {
+        std::cerr << "[VPU_Environment] Error: VPUCore not initialized. Returning default/empty ActualPerformanceRecord." << std::endl;
+        // This is problematic as we must return a reference.
+        // Consider throwing an exception or having a static default instance.
+        // For now, this path indicates a programming error if core is null.
+        static const ActualPerformanceRecord default_record = {}; // Default empty record
+        return default_record;
+    }
+}
+
 void VPU_Environment::print_beliefs() {
     if (core) {
         core->print_current_beliefs();
@@ -41,7 +54,7 @@ VPUCore* VPU_Environment::get_core_for_testing() {
 }
 
 
-VPUCore::VPUCore() {
+VPUCore::VPUCore() : last_perf_record_() { // Initialize last_perf_record_
     std::cout << "[VPU System] Core starting up..." << std::endl;
     initialize_beliefs();
     initialize_hal();
@@ -103,7 +116,8 @@ void VPUCore::execute_task(VPU_Task& task) {
     }
 
     // 3. ACT: Use the Cerebellum to execute the chosen plan and record performance.
-    ActualPerformanceRecord perf_record = pillar4_cerebellum_->execute(chosen_plan, task);
+    // Store the performance record
+    last_perf_record_ = pillar4_cerebellum_->execute(chosen_plan, task);
 
     // 4. LEARN: Use the Feedback Loop to compare prediction and reality.
     // Crucially, use the chosen_plan's name and its predicted_holistic_flux for learning.
@@ -150,7 +164,7 @@ void VPUCore::execute_task(VPU_Task& task) {
         }
     }
     // Pass the predicted flux of the *actually executed plan* to learn_from_feedback
-    pillar5_feedback_->learn_from_feedback(learning_ctx, chosen_plan.predicted_holistic_flux, perf_record);
+    pillar5_feedback_->learn_from_feedback(learning_ctx, chosen_plan.predicted_holistic_flux, last_perf_record_);
 
     // 5. RECORD & ADAPT (Pillar 6): Record the executed plan for graph analysis and potential fusion.
     // The analyze_and_fuse_patterns() is called periodically from within record_executed_plan().
@@ -189,15 +203,127 @@ void VPUCore::initialize_beliefs() {
     hw_profile_->transform_costs["FFT_INVERSE"] = 280.0;
     hw_profile_->transform_costs["JIT_COMPILE_SAXPY"] = 1000.0; // Cost of the JIT compilation step itself
 
+    // New Hamming Weight sensitivities
+    hw_profile_->flux_sensitivities["SAXPY_STANDARD_lambda_hw_combined"] = 0.1;    // Default sensitivity
+    hw_profile_->flux_sensitivities["EXECUTE_JIT_SAXPY_lambda_hw_combined"] = 0.05; // JIT might be less sensitive to input HW
+    hw_profile_->flux_sensitivities["GEMM_NAIVE_lambda_hw_combined"] = 0.2;
+    hw_profile_->flux_sensitivities["GEMM_FLUX_ADAPTIVE_lambda_hw_combined"] = 0.15;
+    hw_profile_->flux_sensitivities["CONV_DIRECT_lambda_hw_combined"] = 0.25;
+    // ELEMENT_WISE_MULTIPLY might also have one if it's made data-dependent beyond base cost
+    // hw_profile_->flux_sensitivities["ELEMENT_WISE_MULTIPLY_lambda_hw_combined"] = 0.05;
+
+
     std::cout << "[VPUCore] Initial beliefs populated (with Pillar3/6 compatible costs)." << std::endl;
 }
 
+#include "hal/hal_utils.h" // For VPU::HAL::calculate_data_hamming_weight
+#include "hal/hal.h"       // For VPU::HAL::cpu_saxpy etc. (already included via vpu_core.h usually)
+
 void VPUCore::initialize_hal() {
     kernel_lib_ = std::make_shared<HAL::KernelLibrary>();
-    // In a real system, this might scan for plugins or pre-register kernels
-    // For now, we can manually register a few.
-    // Example: kernel_lib_->register_kernel("SAXPY_CPU", some_cpu_saxpy_function_ptr);
-    std::cout << "[VPUCore] HAL and Kernel Library initialized." << std::endl;
+
+    // SAXPY_STANDARD Kernel
+    (*kernel_lib_)["SAXPY_STANDARD"] = [](VPU_Task& task) -> HAL::KernelFluxReport {
+        HAL::KernelFluxReport report;
+        if (!task.data_in_a || !task.data_out || task.num_elements == 0) {
+            std::cerr << "SAXPY_STANDARD: Invalid data pointers or zero elements." << std::endl;
+            return {0,0,0};
+        }
+        const float* x_ptr = static_cast<const float*>(task.data_in_a);
+        // Assuming task.data_in_b might hold 'y' for SAXPY if 'a' is in task.alpha
+        // Or, more likely, task.data_out is also the input 'y' for SAXPY (in-place like)
+        // For this example, let's assume data_out is y and is modified in place.
+        // And task.data_in_a is x.
+        float* y_ptr = static_cast<float*>(task.data_out);
+
+        std::vector<float> x_vec(x_ptr, x_ptr + task.num_elements);
+        std::vector<float> y_vec(y_ptr, y_ptr + task.num_elements); // y is input/output
+
+        report.hw_in_cost = HAL::calculate_data_hamming_weight(x_vec.data(), x_vec.size() * sizeof(float));
+        report.hw_in_cost += HAL::calculate_data_hamming_weight(y_vec.data(), y_vec.size() * sizeof(float)); // Initial Y
+
+        HAL::cpu_saxpy(task.alpha, x_vec, y_vec); // y_vec is updated here
+
+        // Copy data back from y_vec to task.data_out if necessary (it is, as y_vec is a copy)
+        for(size_t i = 0; i < task.num_elements; ++i) y_ptr[i] = y_vec[i];
+
+        report.hw_out_cost = HAL::calculate_data_hamming_weight(y_vec.data(), y_vec.size() * sizeof(float));
+        report.cycle_cost = task.num_elements * 2; // 1 mul, 1 add
+        return report;
+    };
+
+    // GEMM_NAIVE Kernel
+    (*kernel_lib_)["GEMM_NAIVE"] = [](VPU_Task& task) -> HAL::KernelFluxReport {
+        HAL::KernelFluxReport report;
+        // Assuming M, N, K are packed into VPU_Task extended_params or similar
+        // For simplicity, let's assume num_elements means M*K for A, and K*N for B, M*N for C
+        // This is a gross simplification. A real system needs proper dimension handling.
+        if (!task.data_in_a || !task.data_in_b || !task.data_out ||
+            !task.extended_params.count("M") || !task.extended_params.count("N") || !task.extended_params.count("K")) {
+            std::cerr << "GEMM_NAIVE: Invalid data pointers or missing M, N, K dimensions." << std::endl;
+            return {0,0,0};
+        }
+        int M = task.extended_params["M"];
+        int N = task.extended_params["N"];
+        int K = task.extended_params["K"];
+
+        const float* A_ptr = static_cast<const float*>(task.data_in_a);
+        const float* B_ptr = static_cast<const float*>(task.data_in_b);
+        float* C_ptr = static_cast<float*>(task.data_out);
+
+        std::vector<float> A_vec(A_ptr, A_ptr + (M * K));
+        std::vector<float> B_vec(B_ptr, B_ptr + (K * N));
+        std::vector<float> C_vec(M * N); // Output buffer, HAL::cpu_gemm_naive will fill it
+
+        report.hw_in_cost = HAL::calculate_data_hamming_weight(A_vec.data(), A_vec.size() * sizeof(float));
+        report.hw_in_cost += HAL::calculate_data_hamming_weight(B_vec.data(), B_vec.size() * sizeof(float));
+
+        HAL::cpu_gemm_naive(A_vec, B_vec, C_vec, M, N, K);
+
+        for(size_t i = 0; i < (size_t)(M*N); ++i) C_ptr[i] = C_vec[i]; // Copy out
+
+        report.hw_out_cost = HAL::calculate_data_hamming_weight(C_vec.data(), C_vec.size() * sizeof(float));
+        report.cycle_cost = M * N * K * 2; // Roughly M*N*K multiply-adds
+        return report;
+    };
+
+    // FFT_FORWARD Kernel (Double precision)
+    (*kernel_lib_)["FFT_FORWARD"] = [](VPU_Task& task) -> HAL::KernelFluxReport {
+        HAL::KernelFluxReport report;
+        if (!task.data_in_a || !task.data_out || task.num_elements == 0) {
+            std::cerr << "FFT_FORWARD: Invalid data pointers or zero elements." << std::endl;
+            return {0,0,0};
+        }
+        const double* in_ptr = static_cast<const double*>(task.data_in_a);
+        double* out_ptr = static_cast<double*>(task.data_out); // Output buffer for FFT
+
+        std::vector<double> in_vec(in_ptr, in_ptr + task.num_elements);
+        // FFT output size is typically N/2+1 complex, but hal function takes N doubles for out
+        // For simplicity, assume HAL::cpu_fft_forward handles output vector sizing or expects it pre-sized.
+        // Let's assume output is also task.num_elements for this HAL function.
+        std::vector<double> out_vec(task.num_elements);
+
+
+        report.hw_in_cost = HAL::calculate_data_hamming_weight(in_vec.data(), in_vec.size() * sizeof(double));
+
+        HAL::cpu_fft_forward(in_vec, out_vec);
+
+        for(size_t i=0; i<task.num_elements; ++i) out_ptr[i] = out_vec[i];
+
+
+        report.hw_out_cost = HAL::calculate_data_hamming_weight(out_vec.data(), out_vec.size() * sizeof(double));
+        // Cycle cost for FFT is roughly N log N
+        if (task.num_elements > 0) {
+            report.cycle_cost = static_cast<uint64_t>(task.num_elements * std::log2(task.num_elements) * 5); // *5 as a scaling factor
+        } else {
+            report.cycle_cost = 0;
+        }
+        return report;
+    };
+
+    // TODO: Add other kernels like FFT_INVERSE, GEMM_FLUX_ADAPTIVE, CONV_DIRECT etc.
+
+    std::cout << "[VPUCore] HAL and Kernel Library initialized with new flux-reporting kernels." << std::endl;
 }
 
 void VPUCore::print_current_beliefs() {
@@ -232,6 +358,10 @@ void VPUCore::print_current_beliefs() {
         std::cout << "No hardware profile loaded." << std::endl;
     }
     std::cout << "==============================================\n" << std::endl;
+}
+
+const ActualPerformanceRecord& VPUCore::get_last_performance_record() const {
+    return last_perf_record_;
 }
 
 } // namespace VPU

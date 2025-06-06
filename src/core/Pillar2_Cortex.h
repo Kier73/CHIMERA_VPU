@@ -38,6 +38,9 @@ namespace VPU { // Changed namespace to VPU
         // Profiles the omnimorphic characteristics of a given data stream
         OmniProfile profileOmni(const double* data, int num_elements);
 
+        // Calculates Hamming Weight and Sparsity for a given data buffer
+        static void calculate_hamming_weight_for_profile(const void* data, size_t num_bytes, DataProfile& profile);
+
         // IoT Client for fetching external sensor data
         std::unique_ptr<IoTClient> iot_client_;
 

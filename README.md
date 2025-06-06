@@ -1,2 +1,2 @@
-# CHIMERA_VPU
+# Dynamic Flux VPU
 Omnimorphic VPU

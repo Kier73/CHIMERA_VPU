@@ -1,6 +1,6 @@
-# Project Chimera VPU Build System
+# Dynamic Flux VPU Build System
 cmake_minimum_required(VERSION 3.15)
-project(ChimeraVPU CXX)
+project(DynamicFluxVPU CXX)
 
 include(FetchContent)
 FetchContent_Declare(

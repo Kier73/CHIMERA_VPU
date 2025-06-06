@@ -99,34 +99,58 @@ double Orchestrator::simulate_flux_cost(const ExecutionPlan& plan, const DataPro
         }
         // Is this a final computation step?
         if(hw_profile_->base_operational_costs.count(step.operation_name)) {
-            double base_op_cost = hw_profile_->base_operational_costs.at(step.operation_name);
-            double dynamic_cost = 0.0;
+            double base_op_cost = hw_profile_->base_operational_costs.at(step.operation_name); // This is now primarily predicted_cycle_cost
+            double dynamic_cost_omni = 0.0; // Cost from existing omnimorphic metrics
+            double dynamic_cost_hw = 0.0;   // Cost from Hamming Weight
 
-            // This is f(ACW, λ) - the function that translates data complexity into cost
+            // Calculate dynamic_cost_omni (existing logic based on amplitude, frequency, original sparsity interpretation)
             if (step.operation_name == "CONV_DIRECT") {
                 if (hw_profile_->flux_sensitivities.count("lambda_Conv_Amp") &&
                     hw_profile_->flux_sensitivities.count("lambda_Conv_Freq")) {
-                    dynamic_cost = (profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_Conv_Amp")) +
-                                   (profile.frequency_flux * hw_profile_->flux_sensitivities.at("lambda_Conv_Freq"));
+                    dynamic_cost_omni = (profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_Conv_Amp")) +
+                                        (profile.frequency_flux * hw_profile_->flux_sensitivities.at("lambda_Conv_Freq"));
                 }
             } else if (step.operation_name == "GEMM_NAIVE" || step.operation_name == "GEMM_FLUX_ADAPTIVE") {
-                if (hw_profile_->flux_sensitivities.count("lambda_Sparsity")) {
-                    dynamic_cost = (1.0 - profile.sparsity_ratio) * hw_profile_->flux_sensitivities.at("lambda_Sparsity");
+                // Assuming lambda_Sparsity refers to the original sparsity metric (percent_zero or similar)
+                // and not the new bit-level sparsity_ratio from Hamming Weight.
+                // If lambda_Sparsity should use the new sparsity_ratio, this needs adjustment.
+                // For now, let's assume it uses profile.sparsity_ratio (which is 1 - HW_density).
+                // A key like "GEMM_NAIVE_lambda_Sparsity" might be more explicit.
+                if (hw_profile_->flux_sensitivities.count("lambda_Sparsity")) { // Generic sparsity sensitivity
+                    // This interpretation might need refinement. If sparsity_ratio is bit-level (1.0 for all zeros),
+                    // then (1.0 - profile.sparsity_ratio) is density.
+                    // If lambda_Sparsity expects higher cost for denser data, then (1.0 - profile.sparsity_ratio) is correct.
+                    dynamic_cost_omni = (1.0 - profile.sparsity_ratio) * hw_profile_->flux_sensitivities.at("lambda_Sparsity");
                 }
             } else if (step.operation_name == "SAXPY_STANDARD") {
-                if (hw_profile_->flux_sensitivities.count("lambda_SAXPY_generic")) {
-                     dynamic_cost = profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_SAXPY_generic");
+                if (hw_profile_->flux_sensitivities.count("lambda_SAXPY_generic")) { // Generic sensitivity for SAXPY
+                     dynamic_cost_omni = profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_SAXPY_generic");
                 }
             } else if (step.operation_name == "EXECUTE_JIT_SAXPY") {
                 if (hw_profile_->flux_sensitivities.count("lambda_SAXPY_generic")) {
-                    // JIT version might have different/lower dynamic cost sensitivity
-                    dynamic_cost = profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_SAXPY_generic") * 0.5;
+                    dynamic_cost_omni = profile.amplitude_flux * hw_profile_->flux_sensitivities.at("lambda_SAXPY_generic") * 0.5; // JIT might be less sensitive
                 }
             }
-            // Note: ELEMENT_WISE_MULTIPLY currently has a base_operational_cost but no dynamic_cost logic.
-            // This is acceptable for now as it's an intermediate step in FFT convolution.
+            // Note: ELEMENT_WISE_MULTIPLY currently has a base_operational_cost but no dynamic_cost_omni logic.
 
-            total_flux += (base_op_cost + dynamic_cost);
+            // Calculate dynamic_cost_hw (new Hamming Weight based cost)
+            // profile.hamming_weight is from DataProfile (based on data_in_a)
+            // profile.sparsity_ratio is also available (1.0 - HW_density)
+            std::string hw_sensitivity_key = step.operation_name + "_lambda_hw_combined";
+            if (hw_profile_->flux_sensitivities.count(hw_sensitivity_key)) {
+                // This assumes the sensitivity value expects raw hamming_weight.
+                // Alternatively, it could be based on sparsity_ratio or (1.0 - sparsity_ratio).
+                dynamic_cost_hw = static_cast<double>(profile.hamming_weight) * hw_profile_->flux_sensitivities.at(hw_sensitivity_key);
+            }
+
+            total_flux += (base_op_cost + dynamic_cost_omni + dynamic_cost_hw);
+
+            // Optional: More detailed logging
+            // std::cout << "      Step: " << step.operation_name
+            //           << ", BaseCost: " << base_op_cost
+            //           << ", OmniCost: " << dynamic_cost_omni
+            //           << ", HWCost: " << dynamic_cost_hw
+            //           << ", StepFlux: " << (base_op_cost + dynamic_cost_omni + dynamic_cost_hw) << std::endl;
         }
         // The following 'else if' blocks for SAXPY_STANDARD and EXECUTE_JIT_SAXPY are removed
         // as their logic is now incorporated above within the main 'if(hw_profile_->base_operational_costs.count(step.operation_name))' block.

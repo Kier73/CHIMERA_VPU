@@ -4,6 +4,7 @@
 #include <numeric>      // For std::accumulate (if needed elsewhere)
 #include <iostream>     // For std::cerr
 #include <algorithm>    // For std::fill (if needed elsewhere)
+#include <cstdint>      // For uint8_t, uint64_t
 
 // The actual fftw3.h is already included in Pillar2_Cortex.h
 // No need for simulated FFTW functions or typedefs here.
@@ -53,12 +54,25 @@ namespace VPU { // Changed namespace
         data_profile_ptr->amplitude_flux = omni_profile.amplitude_flux;
         data_profile_ptr->frequency_flux = omni_profile.frequency_flux;
         data_profile_ptr->entropy_flux = omni_profile.entropy_flux;
-        // TODO: Populate hamming_weight and sparsity_ratio from VPU_Task if applicable/available.
-        // For example, if task_type indicates binary data, or if VPU_Task has fields for these.
 
         std::cout << "  -> OmniProfile generated: AF=" << data_profile_ptr->amplitude_flux
                   << ", FF=" << data_profile_ptr->frequency_flux
                   << ", EF=" << data_profile_ptr->entropy_flux << std::endl;
+
+        // Calculate Hamming Weight profile
+        if (task.data_in_a && task.data_in_a_size_bytes > 0) { // Use data_in_a_size_bytes
+            const void* hw_data_ptr = task.data_in_a;
+            size_t hw_num_bytes = task.data_in_a_size_bytes;
+            Cortex::calculate_hamming_weight_for_profile(hw_data_ptr, hw_num_bytes, *data_profile_ptr);
+
+            std::cout << "  -> HW Profile generated (from data_in_a): HW=" << data_profile_ptr->hamming_weight
+                      << ", Sparsity=" << data_profile_ptr->sparsity_ratio << std::endl;
+        } else {
+            // Set default Hamming weight and sparsity (already done by DataProfile constructor, but explicit for clarity)
+            data_profile_ptr->hamming_weight = 0;
+            data_profile_ptr->sparsity_ratio = 1.0;
+            std::cout << "  -> HW Profile not generated due to null data or zero elements (defaults set)." << std::endl;
+        }
 
         // --- Populate DataProfile with IoT Sensor Data (Conceptual/Dummy) ---
         if (next_iot_override_) {
@@ -128,6 +142,40 @@ namespace VPU { // Changed namespace
         // --- End of IoT Sensor Data Population ---
 
         return {data_profile_ptr, task.task_type};
+    }
+
+    // Definition for the static helper function to calculate Hamming Weight and Sparsity
+    void Cortex::calculate_hamming_weight_for_profile(const void* data, size_t num_bytes, DataProfile& profile)
+    {
+        if (!data || num_bytes == 0) {
+            profile.hamming_weight = 0;
+            profile.sparsity_ratio = 1.0; // No bits set means fully sparse
+            return;
+        }
+
+        uint64_t total_hw = 0;
+        const uint8_t* byte_data = static_cast<const uint8_t*>(data);
+
+        for (size_t i = 0; i < num_bytes; ++i) {
+        #if defined(__GNUC__) || defined(__clang__)
+            total_hw += __builtin_popcount(byte_data[i]);
+        #elif defined(_MSC_VER)
+            // __popcnt intrinsic in MSVC typically takes unsigned int.
+            // For a single byte, we can cast or use a small loop.
+            unsigned char byte = byte_data[i];
+            total_hw += __popcnt(static_cast<unsigned int>(byte)); // Cast byte to unsigned int
+        #else
+            // Fallback for other compilers
+            unsigned char byte = byte_data[i];
+            for(int bit = 0; bit < 8; ++bit) {
+                if((byte >> bit) & 1) total_hw++;
+            }
+        #endif
+        }
+        profile.hamming_weight = total_hw;
+
+        uint64_t total_bits = num_bytes * 8;
+        profile.sparsity_ratio = (total_bits > 0) ? (1.0 - (static_cast<double>(total_hw) / total_bits)) : 1.0;
     }
 
     // Private method for actual profiling logic

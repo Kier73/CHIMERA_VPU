@@ -40,10 +40,14 @@ struct VPU_Task {
     const void* data_in_b;
     void* data_out;
     size_t num_elements; // Relevant for array/vector operations, context for data_in/out pointers
+    size_t data_in_a_size_bytes; // Size of data_in_a in bytes
+    size_t data_in_b_size_bytes; // Size of data_in_b in bytes
+
 
     // Default constructor to initialize members
     VPU_Task() : task_id(0), kernel_type(KernelType::FUNCTION_POINTER), kernel_size(0),
-                 data_in_a(nullptr), data_in_b(nullptr), data_out(nullptr), num_elements(0) {}
+                 data_in_a(nullptr), data_in_b(nullptr), data_out(nullptr), num_elements(0),
+                 data_in_a_size_bytes(0), data_in_b_size_bytes(0) {}
 };
 
 // Represents the VPU runtime environment.
@@ -64,6 +68,9 @@ public:
 
     // Method to get access to VPUCore for testing purposes
     VPUCore* get_core_for_testing();
+
+    // Method to get the last performance record for testing
+    const ActualPerformanceRecord& get_last_performance_record() const;
 
 private:
     std::unique_ptr<VPUCore> core;

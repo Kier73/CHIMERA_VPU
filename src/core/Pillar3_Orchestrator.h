@@ -9,17 +9,23 @@ namespace VPU {
 // Represents the hardware's known performance characteristics (the "beliefs").
 // This is the core model that Pillar 5 will update.
 struct HardwareProfile {
-    // Defines the base cost (on 'silent' data) for an operation.
-    // Key: string (e.g., "CONVOLUTION_DIRECT")
+    // Defines the base cost for an operation, primarily predicting cycle_cost.
+    // e.g., "CONV_DIRECT" -> 100.0 (arbitrary flux units, representing estimated cycles)
+    // This cost is for the operation itself, assuming neutral or average data impact.
     std::map<std::string, double> base_operational_costs;
 
-    // Defines the cost of changing data representation.
+    // Defines the cost of changing data representation or setup costs.
+    // e.g., "FFT_FORWARD" (if considered a transform), "JIT_COMPILE_SAXPY"
     // Key: string (e.g., "TRANSFORM_TIME_TO_FREQ")
     std::map<std::string, double> transform_costs;
 
-    // Defines how sensitive an operation is to different flux metrics.
+    // Defines how sensitive an operation is to different data characteristics (flux per unit of metric).
     // These are the "lambdas" that Pillar 5 learns and updates.
-    std::map<std::string, double> flux_sensitivities; // e.g., "lambda_A", "lambda_sparsity"
+    // Examples:
+    // - "OPERATION_NAME_lambda_Sparsity" -> how cost changes with data sparsity.
+    // - "OPERATION_NAME_lambda_AmplitudeFlux" -> how cost changes with amplitude flux.
+    // - "OPERATION_NAME_lambda_hw_combined" -> new, for Hamming Weight sensitivity.
+    std::map<std::string, double> flux_sensitivities;
 };
 
 class Orchestrator {
