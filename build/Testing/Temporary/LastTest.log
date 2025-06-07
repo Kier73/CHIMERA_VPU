@@ -1,0 +1,133 @@
+Start testing: Jun 07 03:51 UTC
+----------------------------------------------------------
+1/1 Testing: EndToEndLearningTest
+1/1 Test: EndToEndLearningTest
+Command: "/app/build/e2e_full_loop"
+Directory: /app/build
+"EndToEndLearningTest" start time: Jun 07 03:51 UTC
+Output:
+----------------------------------------------------------
+===== VPU BOOTSTRAP SEQUENCE STARTING =====
+
+[VPU System] Core starting up...
+[Pillar 2] Cortex initialized.
+[VPU System] All pillars are online. Ready.
+
+===== VPU CURRENT BELIEFS =====
+--- Base Operational Costs ---
+  'CONV_DIRECT': 50000
+  'ELEMENT_WISE_MULTIPLY': 10000
+  'GEMM_FLUX_ADAPTIVE': 300000
+  'GEMM_NAIVE': 100000
+--- Transform Costs ---
+  'FFT_FORWARD': 200000
+  'FFT_INVERSE': 200000
+  'TRANSFORM_TIME_TO_FREQ': 200000
+--- Flux Sensitivities ---
+  'lambda_A': 100
+  'lambda_Sparsity': 5e+06
+==============================
+
+
+
+======== RUNNING JOB 1: CONVOLUTION ON SPIKY DATA (Simulating Slow Hardware) ========
+
+[Pillar 2] Cortex: Analyzing task 'CONVOLUTION'...
+  -> OmniProfile generated: AF=88.8889, FF=0.364593, EF=0.784876
+[Pillar 3] Orchestrator: Making decision for task 'CONVOLUTION'...
+  -> Path 'Time Domain (Direct)' - Predicted Flux: 58888.9
+  -> Path 'Frequency Domain (FFT)' - Predicted Flux: 410000
+  ==> Decision: Chose 'Time Domain (Direct)' with lowest predicted flux.
+[Pillar 4] Cerebellum: Beginning execution of plan 'Time Domain (Direct)'.
+  -> Dispatching Step: CONV_DIRECT
+    -> [HAL KERNEL STUB] CONV_DIRECT called.
+  ==> Execution Complete. Observed Flux (Latency ns): 11291
+[Pillar 5] Hippocampus: Analyzing feedback...
+  -> Predicted Flux: 58888.9, Observed Flux: 11291
+  ==> Result: **FLUX QUARK DETECTED!** Deviation is -80.83%. Updating beliefs.
+    -> Updating sensitivity 'lambda_A': 100.00 -> 91.92
+
+
+>>>>> VPU BELIEFS AFTER JOB 1 <<<<<
+===== VPU CURRENT BELIEFS =====
+--- Base Operational Costs ---
+  'CONV_DIRECT': 50000.00
+  'ELEMENT_WISE_MULTIPLY': 10000.00
+  'GEMM_FLUX_ADAPTIVE': 300000.00
+  'GEMM_NAIVE': 100000.00
+--- Transform Costs ---
+  'FFT_FORWARD': 200000.00
+  'FFT_INVERSE': 200000.00
+  'TRANSFORM_TIME_TO_FREQ': 200000.00
+--- Flux Sensitivities ---
+  'lambda_A': 91.92
+  'lambda_Sparsity': 5000000.00
+==============================
+
+
+
+======== RUNNING JOB 2: CONVOLUTION ON SPIKY DATA (NOW WITH UPDATED BELIEFS) ========
+
+[Pillar 2] Cortex: Analyzing task 'CONVOLUTION'...
+  -> OmniProfile generated: AF=88.89, FF=0.36, EF=0.78
+[Pillar 3] Orchestrator: Making decision for task 'CONVOLUTION'...
+  -> Path 'Time Domain (Direct)' - Predicted Flux: 58170.43
+  -> Path 'Frequency Domain (FFT)' - Predicted Flux: 410000.00
+  ==> Decision: Chose 'Time Domain (Direct)' with lowest predicted flux.
+[Pillar 4] Cerebellum: Beginning execution of plan 'Time Domain (Direct)'.
+  -> Dispatching Step: CONV_DIRECT
+    -> [HAL KERNEL STUB] CONV_DIRECT called.
+  ==> Execution Complete. Observed Flux (Latency ns): 24376.00
+[Pillar 5] Hippocampus: Analyzing feedback...
+  -> Predicted Flux: 58170.43, Observed Flux: 24376.00
+  ==> Result: **FLUX QUARK DETECTED!** Deviation is -58.10%. Updating beliefs.
+    -> Updating sensitivity 'lambda_A': 91.92 -> 86.58
+
+
+>>>>> FINAL VPU BELIEFS AFTER JOB 2 <<<<<
+===== VPU CURRENT BELIEFS =====
+--- Base Operational Costs ---
+  'CONV_DIRECT': 50000.00
+  'ELEMENT_WISE_MULTIPLY': 10000.00
+  'GEMM_FLUX_ADAPTIVE': 300000.00
+  'GEMM_NAIVE': 100000.00
+--- Transform Costs ---
+  'FFT_FORWARD': 200000.00
+  'FFT_INVERSE': 200000.00
+  'TRANSFORM_TIME_TO_FREQ': 200000.00
+--- Flux Sensitivities ---
+  'lambda_A': 86.58
+  'lambda_Sparsity': 5000000.00
+==============================
+
+
+
+======== RUNNING JOB 3: CONVOLUTION ON SMOOTH DATA ========
+
+[Pillar 2] Cortex: Analyzing task 'CONVOLUTION'...
+  -> OmniProfile generated: AF=1.00, FF=0.10, EF=0.74
+[Pillar 3] Orchestrator: Making decision for task 'CONVOLUTION'...
+  -> Path 'Time Domain (Direct)' - Predicted Flux: 50086.58
+  -> Path 'Frequency Domain (FFT)' - Predicted Flux: 410000.00
+  ==> Decision: Chose 'Time Domain (Direct)' with lowest predicted flux.
+[Pillar 4] Cerebellum: Beginning execution of plan 'Time Domain (Direct)'.
+  -> Dispatching Step: CONV_DIRECT
+    -> [HAL KERNEL STUB] CONV_DIRECT called.
+  ==> Execution Complete. Observed Flux (Latency ns): 23924.00
+[Pillar 5] Hippocampus: Analyzing feedback...
+  -> Predicted Flux: 50086.58, Observed Flux: 23924.00
+  ==> Result: **FLUX QUARK DETECTED!** Deviation is -52.23%. Updating beliefs.
+    -> Updating sensitivity 'lambda_A': 86.58 -> 82.06
+
+
+===== VPU EXECUTION AND LEARNING CYCLE COMPLETE =====
+
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"EndToEndLearningTest" end time: Jun 07 03:51 UTC
+"EndToEndLearningTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jun 07 03:51 UTC

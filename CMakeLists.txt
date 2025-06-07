@@ -66,5 +66,5 @@ target_link_libraries(dgm_loop_test PRIVATE vpu_core)
 
 # --- Enable Testing with CTest ---
 enable_testing()
-add_test(NAME EndToEndLearningTest COMMAND e2e_full_loop)
+add_test(NAME E2E_Full_Loop COMMAND e2e_full_loop)
 add_test(NAME DgmLoopTest COMMAND dgm_loop_test)
